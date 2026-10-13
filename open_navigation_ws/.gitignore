@@ -1,0 +1,14 @@
+# colcon build artifacts
+/build/
+/install/
+/log/
+/.vscode/
+/src/fields2Benchmark_Dataset/
+/fields2benchmark_test/
+/src/navigation_ws/gps_utm/src/__pycache__/wkt_to_utm.cpython-310.pyc/
+/src/navigation_ws/coverage_analysis/results/
+/gps_field_real/
+/gps_field_sim/
+/gps_navigation/
+/src/navigation_ws/results/
+/src/navigation_ws/test/results/

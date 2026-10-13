@@ -1,0 +1,16 @@
+{
+    "path_type": "standard_400m_athletics_track",
+    "coordinate_frame": "map",
+    "coordinate_unit": "m",
+    "target_track_length_m": 400.0,
+    "straight_length_m": 84.39,
+    "curve_radius_m": 36.8,
+    "point_interval_m": 0.5,
+    "direction": "counterclockwise",
+    "point_count": 802,
+    "closed_path": true,
+    "start_x_m": 0.0,
+    "start_y_m": 0.0,
+    "geometric_length_m": 400.00120153100744,
+    "note": "Ideal stadium-shaped reference path; dimensions use an approximate measurement-line radius."
+}

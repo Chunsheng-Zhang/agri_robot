@@ -1,0 +1,160 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import { Refresh } from '@element-plus/icons-vue'
+
+import WelcomeBanner from '../components/dashboard/WelcomeBanner.vue'
+import StatisticsCards from '../components/dashboard/StatisticsCards.vue'
+import RobotStatus from '../components/dashboard/RobotStatus.vue'
+import FieldMap from '../components/dashboard/FieldMap.vue'
+import TaskList from '../components/dashboard/TaskList.vue'
+import FieldCoordinate from '../components/dashboard/FieldCoordinate.vue'
+
+const robotStatusRef = ref<{
+  refreshData: () => Promise<void>
+} | null>(null)
+
+const fieldMapRef = ref<{
+  refreshPath: () => Promise<void>
+} | null>(null)
+
+const refreshing = ref(false)
+
+async function refreshDashboard() {
+  if (refreshing.value) return
+
+  refreshing.value = true
+
+  try {
+    await Promise.all([
+      robotStatusRef.value?.refreshData(),
+      fieldMapRef.value?.refreshPath(),
+    ])
+  } finally {
+    refreshing.value = false
+  }
+}
+</script>
+
+<template>
+  <div class="dashboard-page">
+    <div class="page-heading">
+      <div>
+        <h1>系统总览</h1>
+        <p>实时了解农业机器人运行状态与作业情况</p>
+      </div>
+
+      <el-button
+        type="success"
+        plain
+        :loading="refreshing"
+        @click="refreshDashboard"
+      >
+        <el-icon><Refresh /></el-icon>
+        刷新数据
+      </el-button>
+    </div>
+
+    <WelcomeBanner />
+
+    <StatisticsCards />
+
+    <!-- 农田经纬度输入 -->
+    <div class="coordinate-section">
+      <FieldCoordinate />
+    </div>
+
+    <div class="dashboard-grid">
+      <div class="dashboard-left">
+        <FieldMap ref="fieldMapRef" />
+      </div>
+
+      <div class="dashboard-right">
+        <RobotStatus ref="robotStatusRef" />
+      </div>
+    </div>
+
+    <div class="task-section">
+      <TaskList />
+    </div>
+  </div>
+</template>
+
+<style scoped>
+
+.coordinate-section {
+  min-width: 0;
+  margin-bottom: 24px;
+}
+
+.dashboard-page {
+  width: 100%;
+  min-width: 0;
+  color: #263b30;
+}
+
+.page-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.page-heading h1 {
+  margin: 0;
+  color: #263b30;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.page-heading p {
+  margin: 9px 0 0;
+  color: #89958d;
+  font-size: 13px;
+}
+
+.page-heading .el-button {
+  flex-shrink: 0;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr);
+  align-items: stretch;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.dashboard-left,
+.dashboard-right {
+  min-width: 0;
+}
+
+.task-section {
+  min-width: 0;
+}
+
+@media (max-width: 1000px) {
+  .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .page-heading {
+    align-items: flex-start;
+  }
+
+  .page-heading h1 {
+    font-size: 21px;
+  }
+
+  .page-heading p {
+    line-height: 1.6;
+  }
+
+  .page-heading .el-button {
+    padding: 9px 10px;
+  }
+}
+</style>

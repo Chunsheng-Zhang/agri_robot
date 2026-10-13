@@ -1,0 +1,21 @@
+{
+  "point_count": 4,
+  "points": [
+    {
+      "longitude": 120.101,
+      "latitude": 30.201
+    },
+    {
+      "longitude": 120.102,
+      "latitude": 30.201
+    },
+    {
+      "longitude": 120.102,
+      "latitude": 30.202
+    },
+    {
+      "longitude": 120.101,
+      "latitude": 30.202
+    }
+  ]
+}

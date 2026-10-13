@@ -1,0 +1,12 @@
+waypoints:
+  - name: target_1
+    latitude: 31.230416
+    longitude: 121.473701
+
+  - name: target_2
+    latitude: 31.230500
+    longitude: 121.473800
+
+  - name: target_3
+    latitude: 31.230600
+    longitude: 121.473900

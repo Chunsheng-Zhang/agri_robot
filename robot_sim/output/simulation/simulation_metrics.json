@@ -1,0 +1,18 @@
+{
+    "model": "differential_track_kinematic_model",
+    "controller": "pure_pursuit",
+    "dt_s": 0.05,
+    "speed_mps": 1.0,
+    "lookahead_m": 2.0,
+    "max_yaw_rate_radps": 0.8,
+    "simulation_duration_s": 399.55,
+    "travelled_distance_m": 399.6000000000566,
+    "completed_lap_near_start": true,
+    "sample_count": 7992,
+    "cross_track_error_mean_abs_m": 0.01209711858914996,
+    "cross_track_error_rms_m": 0.06986946743314415,
+    "cross_track_error_max_abs_m": 1.0164146846895685,
+    "heading_error_mean_abs_deg": 0.37849482259312545,
+    "heading_error_rms_deg": 1.506025023535747,
+    "heading_error_max_abs_deg": 18.64891640128056
+}
