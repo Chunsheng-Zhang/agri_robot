@@ -1,0 +1,12 @@
+MGX23 Recording Summary
+Target: 172.16.1.250:9000
+Start time: 20261014_094721
+Elapsed seconds: 300.037
+Total parsed frames: 2999
+Checksum OK: 2999
+Checksum errors: 0
+Checksum pass rate (%): 100.000
+TCP connections: 1
+Reconnects: 0
+CSV file: /home/jetson/agri_robot/mgx23_ws/data/mgx23_logs/mgx23_20261014_094721.csv
+Raw stream file: /home/jetson/agri_robot/mgx23_ws/data/mgx23_logs/mgx23_20261014_094721_raw.bin
