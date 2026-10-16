@@ -25,6 +25,7 @@ setup(
     entry_points={
     "console_scripts": [
         "mgx23_node = mgx23_driver.mgx23_node:main",
+        "mgx23_client = mgx23_driver.mgx23_client:main"
     ],
 },
 )
