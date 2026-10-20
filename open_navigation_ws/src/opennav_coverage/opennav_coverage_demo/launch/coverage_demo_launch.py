@@ -127,8 +127,8 @@ def generate_launch_description():
         'field_json',
         default_value=os.path.join(
             os.path.expanduser('~'),
-            'open_navigation_ws/src/navigation_ws/results/'
-            'ee_field_6_utm_boundary.json'),
+            'agri_robot/open_navigation_ws/src/navigation_ws/results/'
+            '1019_test_1_utm_boundary.json'),
         description='地块边界 GeoJSON，仅 use_transit:=true 时使用'))
     ld.add_action(DeclareLaunchArgument(
         'route_mode', default_value='',

@@ -85,7 +85,7 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 DEFAULT_JSON = os.path.join(
     os.path.expanduser('~'),
-    'open_navigation_ws/src/navigation_ws/results/ee_field_6_utm_boundary.json')
+    'agri_robot/open_navigation_ws/src/navigation_ws/results/1019_test_1_utm_boundary.json')
 
 # transit 采样间隔，和覆盖率路径的 0.1 m 保持一致
 TRANSIT_STEP = 0.1

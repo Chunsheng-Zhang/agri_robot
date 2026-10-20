@@ -33,6 +33,7 @@ setup(
     entry_points={
         'console_scripts': [
             'coordinate_converter = agri_localization.coordinate_converter:main',
+            'gps_map_tf_publisher = agri_localization.gps_map_tf_publisher:main',
         ],
     },
 )

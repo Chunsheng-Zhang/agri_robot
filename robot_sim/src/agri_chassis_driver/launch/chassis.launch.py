@@ -10,13 +10,13 @@ def generate_launch_description():
         executable='Mcnamu_driver_X3',
     )
 
-    '''
+    
     # 2. 底盘控制与运动数据处理
     base_node = Node(
         package='yahboomcar_base_node',
         executable='base_node_X3',
         parameters=[{
-            'pub_odom_tf': False,
+            'pub_odom_tf': True,  # 发布 odom→base_link TF
             'linear_scale_x': 1.0,
             'linear_scale_y': 1.0,
             'angular_scale': 1.0,
@@ -34,9 +34,12 @@ def generate_launch_description():
     joy_node = Node(
         package='joy',
         executable='joy_node',
-    )'''
+    )
 
     return LaunchDescription([
         driver_node,
+        base_node,
+        yahboom_joy_node,
+        joy_node,
 
     ])
