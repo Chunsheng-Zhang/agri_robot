@@ -17,11 +17,11 @@ class CoordinateConverter(Node):
         super().__init__('coordinate_converter')
 
         # 是否使用第一条有效定位作为局部原点
-        self.declare_parameter('use_first_fix_as_origin', True)
+        self.declare_parameter('use_first_fix_as_origin', False)
 
         # 固定原点的经纬度
-        self.declare_parameter('origin_latitude', 0.0)
-        self.declare_parameter('origin_longitude', 0.0)
+        self.declare_parameter('origin_latitude', 36.6468527633281)
+        self.declare_parameter('origin_longitude', 117.021433066391)
 
         self.use_first_fix_as_origin = (
             self.get_parameter('use_first_fix_as_origin')

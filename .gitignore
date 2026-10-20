@@ -214,12 +214,12 @@ results/
 # Yahboom SDK 里的 dlib / OpenNI / g2o / YDLidar-SDK 等，可自行下载
 yahboomcar_ros2_ws/software/
 
-# ============================
+# robot_sim 的路径规划 / 轨迹跟踪结果
+robot_sim/output/
+robot_sim/output/**
+
 # 例外：保留仿真输出结果
 # ============================
-# robot_sim 的路径规划 / 轨迹跟踪结果，体积小，作为示例保留
-!robot_sim/output/
-!robot_sim/output/**
 
 # yahboomcar_mediapipe 人脸检测 demo 依赖的 OpenCV 级联文件
 !**/haarcascade_*.xml

@@ -20,10 +20,10 @@ class PathPublisher(Node):
 
         self.declare_parameter(
             'csv_file',
-            str(Path.home() / 'agri_robot/robot_sim/output/stadium_path.csv')
+            str(Path.home() / 'agri_robot/robot_sim/output/boundary_path.csv')
         )
 
-        self.declare_parameter('frame_id', 'map')
+        self.declare_parameter('frame_id', 'local_map')
 
         csv_file = self.get_parameter('csv_file').value
         self.frame_id = self.get_parameter('frame_id').value

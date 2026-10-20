@@ -106,9 +106,8 @@ def wkt_to_utm(wkt_path, source_crs="EPSG:4326", target_crs=None):
 if __name__ == '__main__':
 
     WKT_PATH = (
-        "/home/zhang/open_navigation_ws/src/"
-        "fields2Benchmark_Dataset/"
-        "ee_field_6.wkt"
+        "/home/zhang/agri_robot/data/WKT_POLYGON/1019_test_1.wkt"
+
     )
 
     rings, offset, epsg = wkt_to_utm_rings(WKT_PATH)
@@ -128,7 +127,7 @@ if __name__ == '__main__':
         )
 
     # 保存结果到 results 目录
-    results_dir = "/home/zhang/open_navigation_ws/src/navigation_ws/results"
+    results_dir = "/home/zhang/agri_robot/open_navigation_ws/src/navigation_ws/results"
     os.makedirs(results_dir, exist_ok=True)
 
     # 生成输出文件名（基于输入 WKT 文件名）

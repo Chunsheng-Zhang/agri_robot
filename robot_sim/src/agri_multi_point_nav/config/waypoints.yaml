@@ -1,12 +1,21 @@
 waypoints:
   - name: target_1
-    latitude: 31.230416
-    longitude: 121.473701
+    latitude: 36.6468527633281
+    longitude: 117.021433066391
 
   - name: target_2
-    latitude: 31.230500
-    longitude: 121.473800
+    latitude: 36.6467053079008
+    longitude: 117.021432014200
+
 
   - name: target_3
-    latitude: 31.230600
-    longitude: 121.473900
+    latitude: 36.6467040785547
+    longitude: 117.021575725468    
+
+  - name: target_4
+    latitude: 36.6468038113836
+    longitude: 117.021555217921    
+
+  - name: target_5
+    latitude: 36.6468514201155
+    longitude: 117.021555675521 

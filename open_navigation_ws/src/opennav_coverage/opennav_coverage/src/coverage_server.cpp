@@ -11,27 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-"""
-OpenNav Coverage
-│
-├── coverage_server.cpp          ← 你现在发来的代码
-│
-├── coverage_server.hpp          ← CoverageServer 类的声明
-│
-├── RobotParams                  ← 机器人参数管理
-│
-├── DecompGenerator              ← 农田区域分解
-│
-├── HeadlandGenerator            ← 地头区域生成
-│
-├── SwathGenerator               ← 作业条带生成
-│
-├── RouteGenerator               ← 作业条带排序与路线生成
-│
-├── PathGenerator                ← 路径及转弯段生成
-│
-└── Visualizer                   ← 规划结果可视化
-"""
+
 
 #include <cmath>
 #include <optional>
