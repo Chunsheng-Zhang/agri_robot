@@ -1,0 +1,37 @@
+# Humble rosbag2 subscriptions. Keep reference_path volatile to also accept the
+# existing CSV path_publisher; start recording BEFORE planning/publishing a path.
+/scan:
+  reliability: best_effort
+  durability: volatile
+  history: keep_last
+  depth: 20
+/joy:
+  reliability: best_effort
+  durability: volatile
+  history: keep_last
+  depth: 20
+/camera/color/image_raw:
+  reliability: best_effort
+  durability: volatile
+  history: keep_last
+  depth: 3
+/reference_path:
+  reliability: reliable
+  durability: volatile
+  history: keep_last
+  depth: 10
+/tf_static:
+  reliability: reliable
+  durability: transient_local
+  history: keep_last
+  depth: 100
+/localization/origin:
+  reliability: reliable
+  durability: transient_local
+  history: keep_last
+  depth: 1
+/safety/events:
+  reliability: reliable
+  durability: transient_local
+  history: keep_last
+  depth: 100
