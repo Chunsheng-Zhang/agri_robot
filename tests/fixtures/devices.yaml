@@ -1,0 +1,14 @@
+/**:
+  ros__parameters:
+    allow_lateral: true
+    laser_x: 0.0
+    laser_y: 0.0
+    laser_yaw: 0.0
+    joy_profile: jetson
+safety:
+  ros__parameters:
+    require_lidar: true
+    require_joy: true
+    clear_duration: 0.3
+    scan_timeout: 0.5
+    joy_timeout: 0.5

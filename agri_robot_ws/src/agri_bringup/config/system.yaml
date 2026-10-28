@@ -1,0 +1,112 @@
+# Shared origin and physical footprint; robot position, tasks and planner use this file.
+/**:
+  ros__parameters:
+    use_sim_time: false
+    origin_latitude: 36.6468527633281
+    origin_longitude: 117.021433066391
+    max_local_radius: 5000.0
+    sensor_timeout: 0.5
+    robot_width: 0.35
+    allow_lateral: true  # X3 mecanum. Set false when migrating to differential tracks.
+    laser_x: 0.0435
+    laser_y: 0.00005258
+    laser_z: 0.11
+    laser_yaw: 0.0  # Existing 4ROS base_link -> laser mounting convention.
+    laser_frame: laser
+    joy_estop_button: 0
+    joy_timeout: 0.5
+
+joy_adapter:
+  ros__parameters:
+    joy_profile: jetson
+    joy_reset_button: 3
+    reset_hold_seconds: 1.0
+    xspeed_limit: 1.0
+    yspeed_limit: 1.0
+    angular_speed_limit: 5.0
+
+camera_status:
+  ros__parameters:
+    image_topic: /camera/color/image_raw
+    image_timeout: 1.0
+
+mgx23_node:
+  ros__parameters:
+    transport: tcp
+    device_ip: 172.16.1.250
+    port: 9000
+    max_accuracy: 0.5
+
+localization:
+  ros__parameters:
+    # Current driver does not classify fix/INS status, by user choice.
+    # valid means frame/numeric/freshness checks passed; not verified RTK FIX.
+    require_fix_status: false
+    heading_offset: 0.0
+    antenna_x: 0.0
+    antenna_y: 0.0
+
+waypoint:
+  ros__parameters:
+    max_linear: 0.20
+    min_linear: 0.03
+    max_angular: 0.50
+    arrival_tolerance: 0.20
+    heading_kp: 1.0
+    distance_kp: 0.5
+    rotate_threshold: 1.0
+    align_threshold: 0.2
+    dwell_time: 2.0
+    control_rate: 20.0
+
+path_tracker:
+  ros__parameters:
+    lookahead: 0.8
+    speed: 0.2
+    max_angular: 0.5
+    completion_tolerance: 0.2
+    search_window: 1.0
+    start_tolerance: 0.8
+    max_path_error: 2.0
+    control_rate: 20.0
+
+safety:
+  ros__parameters:
+    max_linear_speed: 0.3
+    max_angular_speed: 0.6
+    command_timeout: 0.25
+    max_path_error: 2.0
+    publish_rate: 20.0
+    max_lateral_speed: 0.3
+    require_lidar: true
+    scan_timeout: 0.5
+    stop_distance: 0.8
+    resume_distance: 1.2
+    clear_duration: 1.0
+    body_length: 0.45  # Initial X3 footprint estimate; measure actual dimensions.
+    body_width: 0.35
+    footprint_margin: 0.05
+    front_half_angle: 1.0471975511965976
+    rear_half_angle: 1.0471975511965976
+    min_valid_fraction: 0.5
+    min_coverage_fraction: 0.85
+
+coverage_server:
+  ros__parameters:
+    coordinates_in_cartesian_frame: true
+    operation_width: 0.8
+    min_turning_radius: 0.6
+    linear_curv_change: 2.0
+    default_headland_type: CONSTANT
+    default_path_type: DUBIN
+    default_path_continuity_type: CONTINUOUS
+    default_turn_point_distance: 0.1
+    default_reduce_path: false
+
+coverage_adapter:
+  ros__parameters:
+    headland_width: 3.0
+    swath_angle: 0.0
+    sampling_distance: 0.1
+    planning_timeout: 120.0
+    generate_decomp: false

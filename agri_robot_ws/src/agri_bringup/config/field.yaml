@@ -1,0 +1,7 @@
+# Same sample field/origin as the existing waypoint configuration.
+points:
+  - {latitude: 36.6468527633281, longitude: 117.021433066391}
+  - {latitude: 36.6467053079008, longitude: 117.021432014200}
+  - {latitude: 36.6467040785547, longitude: 117.021575725468}
+  - {latitude: 36.6468038113836, longitude: 117.021555217921}
+  - {latitude: 36.6468514201155, longitude: 117.021555675521}

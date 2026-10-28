@@ -1,0 +1,3 @@
+waypoints:
+  - {latitude: 36.0, longitude: 117.00000555, dwell_time: 0.2}
+  - {latitude: 36.00000450, longitude: 117.00000555, dwell_time: 0.2}
