@@ -23,11 +23,16 @@
 
 from contextlib import asynccontextmanager
 from datetime import datetime
-from math import atan2, degrees, hypot
+from math import atan2, degrees, hypot, isfinite
 from threading import Lock, Thread
 from time import monotonic
 import json
 from pathlib import Path as FilePath
+
+try:
+    from .devices import device_cache, install_ros_devices, install_routes, service_call
+except ImportError:
+    from devices import device_cache, install_ros_devices, install_routes, service_call
 
 
 # ============================================================
@@ -54,6 +59,7 @@ try:
 
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.node import Node
+    from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 
     from nav_msgs.msg import Odometry, Path
     from geometry_msgs.msg import Twist
@@ -115,6 +121,9 @@ class RobotState:
             "reference_path_points": 0,
             "tracked_path_points": 0,
             "reference_path": [],
+            "reference_frame": "",
+            "tracked_path": [],
+            "tracked_frame": "",
 
             # 最近一次收到里程计的时间
             "last_odom_time": None,
@@ -237,12 +246,14 @@ if ROS_AVAILABLE:
             # 7.4 订阅参考路径
             # ------------------------------------------------
 
-            self.create_subscription(
+            self.reference_subscription = self.create_subscription(
                 Path,
                 "/reference_path",
                 self.reference_path_callback,
                 10,
             )
+            self.reference_transient = False
+            self.create_timer(1.0, self.refresh_reference_qos)
 
             # ------------------------------------------------
             # 7.5 订阅实际跟踪路径
@@ -255,9 +266,29 @@ if ROS_AVAILABLE:
                 10,
             )
 
+            install_ros_devices(self)
+
             self.get_logger().info(
                 "农业机器人 ROS 2 桥接节点已启动"
             )
+
+        def refresh_reference_qos(self):
+            """Receive a latched plan even when backend starts after planning.
+
+            The legacy CSV publisher is volatile, so adapt to the offered profile.
+            This only changes a read-only subscription, never a control publisher.
+            """
+            publishers = self.get_publishers_info_by_topic('/reference_path')
+            if not publishers:
+                return
+            transient = all(p.qos_profile.durability == DurabilityPolicy.TRANSIENT_LOCAL for p in publishers)
+            if transient == self.reference_transient:
+                return
+            self.destroy_subscription(self.reference_subscription)
+            qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                             durability=DurabilityPolicy.TRANSIENT_LOCAL if transient else DurabilityPolicy.VOLATILE)
+            self.reference_subscription = self.create_subscription(Path, '/reference_path', self.reference_path_callback, qos)
+            self.reference_transient = transient
 
         # ====================================================
         # 7.6 里程计回调
@@ -297,6 +328,9 @@ if ROS_AVAILABLE:
             )
 
             angular_speed = velocity.angular.z
+
+            if not all(isfinite(v) for v in (x, y, heading, speed, angular_speed)):
+                return
 
             # 当前系统时间，仅用于显示。
             timestamp = datetime.now().astimezone().isoformat(
@@ -358,7 +392,8 @@ if ROS_AVAILABLE:
 
             robot_state.update(
                 reference_path_points=len(points),
-                reference_path=points,
+                reference_path=points if all(isfinite(p['x']) and isfinite(p['y']) for p in points) else [],
+                reference_frame=msg.header.frame_id,
             )
 
         # ====================================================
@@ -366,10 +401,14 @@ if ROS_AVAILABLE:
         # ====================================================
 
         def tracked_path_callback(self, msg: Path):
-            """记录实际跟踪路径点数量。"""
+            """记录实际跟踪路径，供实时页面与参考路径叠加。"""
+
+            points = [{'x': p.pose.position.x, 'y': p.pose.position.y} for p in msg.poses[-10000:]]
 
             robot_state.update(
-                tracked_path_points=len(msg.poses)
+                tracked_path_points=len(msg.poses),
+                tracked_path=points if all(isfinite(p['x']) and isfinite(p['y']) for p in points) else [],
+                tracked_frame=msg.header.frame_id,
             )
 
 
@@ -581,7 +620,7 @@ def publish_emergency_stop(active: bool) -> dict:
         active=False：发送解除急停指令。
 
     返回：
-        最近发送的指令状态。
+        安全服务的确认响应；实际状态由 safety Topic 提供。
 
     注意：
         发布成功不等于底盘已经停止或解除锁定。
@@ -589,32 +628,12 @@ def publish_emergency_stop(active: bool) -> dict:
 
     bridge = require_ros_bridge()
 
-    # 构造 ROS 2 Bool 消息。
-    msg = Bool()
-    msg.data = active
-
-    try:
-        # 发布到 /emergency_stop 话题。
+    # True also uses the immediate stop topic; reset requires a positive service response.
+    if active:
+        msg = Bool()
+        msg.data = True
         bridge.node.emergency_stop_pub.publish(msg)
-
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"发送急停指令失败：{exc}",
-        ) from exc
-
-    # 记录最近发送的指令状态。
-    emergency_stop_state.set(active)
-
-    return {
-        "success": True,
-        "emergency_stop": active,
-        "message": (
-            "急停指令已发送"
-            if active
-            else "解除急停指令已发送"
-        ),
-    }
+    return service_call(bridge.node, "/safety/emergency_stop", active=active)
 
 
 # ============================================================
@@ -646,6 +665,7 @@ def get_robot_status():
     """
 
     data = robot_state.snapshot()
+    devices = device_cache.snapshot()
 
     # --------------------------------------------------------
     # 14.1 判断里程计数据是否过期
@@ -704,6 +724,11 @@ def get_robot_status():
     return {
         # 原有前端字段
         "robot_id": ROBOT_ID,
+        "latitude": devices["gnss"].get("latitude") if devices["gnss"]["fresh"] else None,
+        "longitude": devices["gnss"].get("longitude") if devices["gnss"]["fresh"] else None,
+        "control_mode": devices["safety"].get("owner"),
+        "task_state": devices.get(devices["safety"].get("owner"), {}).get("state"),
+        "safety": devices["safety"],
         "online": online,
         "mode": mode,
 
@@ -716,6 +741,7 @@ def get_robot_status():
         "timestamp": datetime.now().astimezone().isoformat(
             timespec="seconds"
         ),
+        "last_odom_time": data['last_odom_time'],
 
         # ROS 2 连接状态
         "ros_connected": ros_connected,
@@ -766,7 +792,15 @@ def get_reference_path():
     return {
         "count": len(points),
         "points": points,
+        "frame_id": data['reference_frame'],
     }
+
+
+@app.get('/api/robot/path/tracked')
+def get_tracked_path():
+    data = robot_state.snapshot()
+    return {'count': len(data['tracked_path']), 'points': data['tracked_path'],
+            'frame_id': data['tracked_frame']}
 
 
 # ============================================================
@@ -802,8 +836,8 @@ def reset_emergency_stop():
     接口地址：
         /api/robot/emergency-stop/reset
 
-    ROS 2 消息：
-        /emergency_stop = False
+    ROS 2 服务：
+        /safety/emergency_stop，SetBool(data=False)
 
     注意：
         此接口会发送解除指令，不代表车辆已经
@@ -816,7 +850,7 @@ def reset_emergency_stop():
 @app.get("/api/robot/emergency-stop/status")
 def get_emergency_stop_status():
     """
-    查询最近发送的急停指令状态。
+    查询安全模块反馈的急停状态；失联时为未知。
 
     HTTP 方法：
         GET
@@ -833,8 +867,10 @@ def get_emergency_stop_status():
         and bridge.node is not None
     )
 
+    safety = device_cache.snapshot()["safety"]
     return {
-        "emergency_stop": emergency_stop_state.get(),
+        "emergency_stop": safety.get("emergency_stop"),
+        "fresh": safety["fresh"],
         "ros_connected": ros_connected,
     }
 
@@ -923,3 +959,6 @@ def receive_coordinate(data: CoordinateRequest):
         "data": boundary_data,
         "file_path": str(file_path),
     }
+
+
+install_routes(app, require_ros_bridge)
