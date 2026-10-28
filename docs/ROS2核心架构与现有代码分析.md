@@ -89,6 +89,10 @@ waypoint 与 path_tracking 不互相调用。waypoint 不依赖覆盖规划或 P
 
 坐标定义：`map/odom` 为 UTM 网格东向 x、北向 y，单位 m；`base_link` x 向前、y 向左，yaw 逆时针为正，单位 rad。位置、目标点、边界、参考路径和实际轨迹使用同一 `LocalFrame`。任务和规划节点通过持久化的 `/localization/origin` 校验原点，避免仅 frame_id 相同但数值原点不同。
 
+全局原点继续通过统一 YAML 配置，不增加 Web 设置入口。`origin_latitude`、`origin_longitude` 和 `max_local_radius` 在使用 `LocalFrame` 的节点启动后为只读参数，禁止只修改某一节点的运行参数而留下旧转换器。更换实验场地时先停车、取消任务，再修改统一配置并重启整套核心，重新生成目标点平面坐标和覆盖路径。
+
+规划 JSON 的 `projection` 保存 EPSG 与原点经纬度。配置轨迹目录后，每个 `track_*.csv` 同时生成同名 `.json` 元数据，保存相同结构的 `projection`、坐标系、单位、实际位置参考点 `base_link` 和该任务接收到的完整参考路径快照。离线分析先核对投影与原点，再直接叠加参考点和 CSV 的 x/y，不对每条轨迹重新归零。外部发布的 map 路径也必须按同一原点生成；仅声明 frame_id=map 无法证明外部数据的数值基准正确。
+
 MGX23 航向使用用户确认的北零、顺时针、rad。中央经线上可写为 `yaw = wrap(pi/2 - heading + heading_offset)`。实际实现投影一段 1 m 航向向量，额外考虑 UTM 网格收敛角，避免直接把真北当作网格北。`heading_offset` 校准 INS 与车体前向夹角。
 
 `antenna_x/y` 表示 base_link 到 GNSS 天线的车体坐标偏移：先得到天线平面位置，再减去旋转后的偏移，得到底盘控制参考点。默认 0 表示尚未配置杆臂；真实安装应测量。

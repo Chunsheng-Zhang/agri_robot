@@ -12,10 +12,12 @@ pytestmark = pytest.mark.skipif(os.environ.get('AGRI_ROS_TESTS') != '1',
                                 reason='Set AGRI_ROS_TESTS=1 in an isolated ROS domain')
 
 
-def test_services_safety_and_closed_loop():
+def test_services_safety_and_closed_loop(tmp_path):
+    import csv
     import rclpy
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.node import Node
+    from rclpy.parameter import Parameter
     from geometry_msgs.msg import PoseStamped, Twist, Vector3Stamped
     from nav_msgs.msg import Path
     from sensor_msgs.msg import NavSatFix, LaserScan
@@ -32,7 +34,8 @@ def test_services_safety_and_closed_loop():
 
     fixture = FilePath(__file__).parent / 'fixtures'
     rclpy.init(args=['--ros-args', '--params-file', str(fixture / 'core.yaml'),
-                    '-p', f'waypoints_file:={fixture / "waypoints.yaml"}'])
+                    '-p', f'waypoints_file:={fixture / "waypoints.yaml"}',
+                    '-p', f'trajectory_directory:={tmp_path}'])
     executor = SingleThreadedExecutor()
     nodes = []
     try:
@@ -42,6 +45,11 @@ def test_services_safety_and_closed_loop():
         for node in nodes:
             executor.add_node(node)
         frame = LocalFrame(36.0, 117.0)
+        for node in (localization, waypoint, tracker):
+            assert node.frame.identity == frame.identity
+            result = node.set_parameters([Parameter('origin_latitude', value=36.1)])[0]
+            assert not result.successful
+            assert node.get_parameter('origin_latitude').value == 36.0
         state = {'x': 0.0, 'y': 0.0, 'yaw': 0.0, 'v': 0.0, 'w': 0.0, 'sensors': True, 'front': 5.0}
         fix_pub = bench.create_publisher(NavSatFix, '/mgx23/position', 1)
         att_pub = bench.create_publisher(Vector3Stamped, '/mgx23/attitude_stamped', 1)
@@ -150,6 +158,21 @@ def test_services_safety_and_closed_loop():
         until(lambda: tracker.state == 'COMPLETED', 10)
         until(lambda: state['v'] == 0 and not safety.gate.owner)
         assert len(tracker.trajectory.poses) > 3
+        files = list(tmp_path.glob('track_*.csv'))
+        assert len(files) == 1
+        metadata = json.loads(files[0].with_suffix('.json').read_text())
+        assert metadata['projection'] == frame.identity
+        assert metadata['frame_id'] == metadata['reference_path']['frame_id'] == 'map'
+        assert metadata['position_reference'] == 'base_link'
+        expected = [(p.pose.position.x, p.pose.position.y) for p in path.poses]
+        assert [(p['x'], p['y']) for p in metadata['reference_path']['points']] == expected
+        with files[0].open() as stream:
+            rows = list(csv.DictReader(stream))
+        assert len(rows) == len(tracker.trajectory.poses)
+        for row, recorded in zip(rows, tracker.trajectory.poses):
+            assert float(row['x']) == recorded.pose.position.x
+            assert float(row['y']) == recorded.pose.position.y
+            assert recorded.header.frame_id == 'map'
 
         # Localization watchdog revokes ownership and does not restart on recovery.
         assert service(Trigger, '/waypoint/start').success

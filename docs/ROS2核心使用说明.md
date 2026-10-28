@@ -26,6 +26,10 @@ bash scripts/start_core.bash mode:=base chassis:=none
 
 参数源文件为 `agri_robot_ws/src/agri_bringup/config/system.yaml`。symlink-install 后默认 launch 可读该配置；也可通过 `params_file:=<绝对路径>` 指定配置副本。
 
+全局原点只在上述统一 YAML 的 `/**.ros__parameters.origin_latitude/origin_longitude` 中设置，使用 WGS84 十进制度；Web 不增加原点设置。所有核心模块使用同一份参数文件。原点和局部工作半径在各坐标转换节点启动后只读，更改时先停车并取消任务，修改配置后重启整套核心，不逐节点热改原点。
+
+规划文件 `coverage_*.json` 保存 `projection`（EPSG、原点纬度和经度）。跟踪任务配置 `trajectory_directory` 后生成一对 `track_*.csv` 与同名 `.json`；后者保存坐标基准、米/弧度单位、`base_link` 参考点和本任务实际使用的参考路径快照。离线比较时先核对 `projection` 一致，再直接叠加参考路径点与 CSV 的 x/y，不能分别减各自的第一个点。历史 CSV 没有该元数据时，应使用当轮归档 YAML 或 Bag 的 `/localization/origin` 确认基准。
+
 检查：
 
 ```bash
@@ -114,7 +118,7 @@ ros2 service call /tracking/start std_srvs/srv/Trigger '{}'
 ros2 topic echo /tracking/status
 ```
 
-暂停、继续和取消对应 `/tracking/pause`、`/tracking/resume`、`/tracking/cancel`，类型均为 Trigger。规划取消是 `/planning/cancel`。处于运行或暂停状态时不接受中途替换路径，需要先取消再重新开始。任务轨迹在 map 下发布，配置目录后同时持续写 CSV，每 20 条刷新，关闭任务时完成写盘。
+暂停、继续和取消对应 `/tracking/pause`、`/tracking/resume`、`/tracking/cancel`，类型均为 Trigger。规划取消是 `/planning/cancel`。处于运行或暂停状态时不接受中途替换路径，需要先取消再重新开始。任务轨迹在 map 下发布，配置目录后先保存同名 JSON 元数据，再持续写 CSV，每 20 条刷新，关闭任务时完成写盘。
 
 ## 急停与恢复
 

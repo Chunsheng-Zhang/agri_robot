@@ -90,6 +90,10 @@ def test_existing_opennav_action_to_reference_path(tmp_path, headland_width, exp
         artifacts = list(tmp_path.glob('coverage_*.json'))
         assert len(artifacts) == 1
         saved = json.loads(artifacts[0].read_text())
+        assert saved['projection'] == adapter.frame.identity
+        assert saved['frame_id'] == 'map'
+        assert [(p['x'], p['y']) for p in saved['points']] == [
+            (p.pose.position.x, p.pose.position.y) for p in path.poses]
         assert len(saved['points']) == len(path.poses)
         assert not any(saved['is_backward'])
     finally:

@@ -60,10 +60,14 @@ class LocalFrame:
 
 
 def frame_from_node(node):
+    from rcl_interfaces.msg import ParameterDescriptor
+
     defaults = {'origin_latitude': 36.6468527633281,
                 'origin_longitude': 117.021433066391, 'max_local_radius': 5000.0}
     for name, value in defaults.items():
-        node.declare_parameter(name, value)
+        node.declare_parameter(name, value, ParameterDescriptor(
+            read_only=True,
+            description='Fixed local coordinate configuration; change YAML and restart the whole core.'))
     return LocalFrame(*(node.get_parameter(name).value for name in defaults))
 
 

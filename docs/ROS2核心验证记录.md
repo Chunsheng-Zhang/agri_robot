@@ -22,3 +22,21 @@
 Humble 参数实验确认：当参数文件给出了节点专属值，命令行通配 `-p headland_width:=...` 不应被当作该专属值的可靠覆盖。测试用 `-p coverage_adapter:headland_width:=...`，并断言节点实际值，防止对比测试拿相同参数重复运行。
 
 未验证的内容包括实际 MGX23 发布频率与网络延迟、设备 RTK/INS 解状态、航向安装偏角、天线杆臂、真实底盘串口依赖、驱动/固件 watchdog、真实履带侧滑与制动。当前结果证明软件模块及其通信链在上述测试条件下可运行，不等同于完成实车导航验收。
+
+## 固定原点与轨迹对齐补充验证（2026-10-28）
+
+保持统一 YAML 配置，不增加 Web 原点入口。使用 `LocalFrame` 的节点将原点经纬度和工作半径声明为只读，避免运行参数与已创建的转换器不一致。跟踪 CSV 列保持不变，新增同名 JSON，记录投影/原点、坐标系、单位、`base_link` 参考点与本任务收到的参考路径快照。
+
+本次运行 `tests/test_navigation_core.py`、`tests/test_ros_core.py` 和 `tests/test_ros_coverage.py`：31 项通过，约 20 秒。后两者在独立 Domain 226 中使用模拟定位及真实既有 OpenNav C++ 规划服务器，没有启动真实设备。
+
+闭环检查确认定位、多点导航与跟踪节点的原点完全一致，运行期更改原点参数被拒绝；保存的参考路径快照与实际接收路径逐点一致，CSV 的 x/y 与 map 实际轨迹消息逐点一致。OpenNav 检查另外确认规划 JSON 的原点/EPSG 和坐标与发布路径一致。Python 编译和 diff 空白检查通过。
+
+```bash
+source scripts/setup_environment.bash
+AGRI_ROS_TESTS=1 ROS_DOMAIN_ID=226 ROS_LOCALHOST_ONLY=1 \
+  ROS_LOG_DIR=/tmp/agri_origin_alignment_ros PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+  /tmp/agri-device-api-venv/bin/python -m pytest -q \
+  tests/test_navigation_core.py tests/test_ros_core.py tests/test_ros_coverage.py
+```
+
+复现时使用能导入 ROS/pytest/Shapely/pyproj 的 Python；上述 `/tmp` 虚拟环境仅供本次验证。此检查证明软件坐标链和文件基准一致，实际定位、安装杆臂和路径跟踪误差仍需实测。旧 CSV 没有同名元数据时，需核对当轮 YAML 或 Bag 原点；外部 map 路径也须按相同原点生成。

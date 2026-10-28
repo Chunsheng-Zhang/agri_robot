@@ -1,4 +1,5 @@
 import csv
+import json
 import math
 from datetime import datetime
 from pathlib import Path as FilePath
@@ -67,8 +68,28 @@ class PathTracker(TaskNode):
             target.mkdir(parents=True, exist_ok=True)
             name = datetime.now().strftime('track_%Y%m%d_%H%M%S_%f.csv')
             self.record_file = (target / name).open('x', newline='', encoding='utf-8')
-            self.record_writer = csv.writer(self.record_file)
-            self.record_writer.writerow(['stamp', 'x', 'y', 'yaw', 'cross_track', 'heading_error', 'progress'])
+            try:
+                metadata = {
+                    'schema_version': 1, 'trajectory_csv': name,
+                    'frame_id': 'map', 'position_reference': 'base_link',
+                    'projection': self.frame.identity,
+                    'axes': {'x': 'UTM grid east', 'y': 'UTM grid north'},
+                    'units': {'position': 'm', 'angle': 'rad', 'time': 's'},
+                    'time_source': '/odom header.stamp (ROS time)',
+                    # Capture the exact reference received, including externally supplied paths.
+                    'reference_path': {
+                        'frame_id': self.pending_path.header.frame_id,
+                        'points': [{'x': p.pose.position.x, 'y': p.pose.position.y,
+                                    'yaw': yaw_of(p.pose.orientation)} for p in self.pending_path.poses],
+                    },
+                }
+                with (target / FilePath(name).with_suffix('.json')).open('x', encoding='utf-8') as stream:
+                    json.dump(metadata, stream, ensure_ascii=False, allow_nan=False, indent=2)
+                self.record_writer = csv.writer(self.record_file)
+                self.record_writer.writerow(['stamp', 'x', 'y', 'yaw', 'cross_track', 'heading_error', 'progress'])
+            except (OSError, ValueError):
+                self.close_recording()
+                raise
             self.record_count = 0
 
     def finish(self, state, reason=''):

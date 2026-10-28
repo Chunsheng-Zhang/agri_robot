@@ -2,6 +2,8 @@
 /**:
   ros__parameters:
     use_sim_time: false
+    # WGS84 fixed origin for every module. Read-only after startup.
+    # Change only between experiments, then restart the entire core.
     origin_latitude: 36.6468527633281
     origin_longitude: 117.021433066391
     max_local_radius: 5000.0
