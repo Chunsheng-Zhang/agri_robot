@@ -172,8 +172,8 @@ class GPSMapTFPublisher(Node):
         t.child_frame_id = 'odom'
 
         # 平移：机器人在 map 坐标系的位置
-        t.transform.translation.x = map_x
-        t.transform.translation.y = map_y
+        t.transform.translation.x = 0.0
+        t.transform.translation.y = 0.0
         t.transform.translation.z = 0.0
 
         # 旋转：这里假设 odom 和 map 的朝向一致

@@ -65,7 +65,7 @@ class RealPurePursuit(Node):
         self.declare_parameter('linear_speed', 0.25)
         self.declare_parameter('max_angular_speed', 0.6)
         self.declare_parameter('control_rate', 20.0)
-        self.declare_parameter('heading_mode', 'ros')
+        self.declare_parameter('heading_mode', 'north_cw')
         self.declare_parameter('yaw_sign', 1.0)
 
         self.lookahead_distance = float(
