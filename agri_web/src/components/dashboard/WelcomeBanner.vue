@@ -11,7 +11,7 @@
     </p>
 
     <el-tag effect="dark" class="demo-tag">
-      前端演示版本
+      ROS 2 实时监控 · 状态每秒更新
     </el-tag>
   </div>
 </template>

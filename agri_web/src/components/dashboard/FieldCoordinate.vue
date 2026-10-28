@@ -94,6 +94,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { apiUrl } from '../../api/http'
 
 interface FieldPoint {
   id: number
@@ -135,12 +136,9 @@ function createPoint(
   }
 }
 
-// 初始提供四个默认角点
+// 使用现场坐标；不预填示例地块。
 const points = ref<FieldPoint[]>([
-  createPoint('120.101', '30.201'),
-  createPoint('120.102', '30.201'),
-  createPoint('120.102', '30.202'),
-  createPoint('120.101', '30.202'),
+  createPoint(), createPoint(), createPoint(), createPoint(),
 ])
 
 const submitting = ref(false)
@@ -255,8 +253,7 @@ async function submitCoordinates() {
     resultMessage.value = ''
 
     // 2. 发送请求
-    // 保持原来的相对路径，不改变现有请求地址
-    const response = await fetch('http://127.0.0.1:8000/api/field/coordinate', {
+    const response = await fetch(apiUrl('/api/field/coordinate'), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

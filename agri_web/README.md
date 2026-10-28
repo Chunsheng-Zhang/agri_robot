@@ -1,5 +1,9 @@
 # agri_web
 
+现有 Vue 3 总览已接入 ROS 2 实时数据。启动前端：`npm run dev -- --host 0.0.0.0 --port 5173`；还需要启动 FastAPI 后端和相应 ROS 2 节点。
+
+完整启动步骤、跨电脑访问、视频配置和断连检查见 [Web 实时数据显示与启动](../docs/Web实时数据显示与启动.md)。默认通过 Vite 同源代理连接本机 8000/8080，配置示例见 `.env.example`。未接收到数据时显示未知，不提供模拟数据。
+
 This template should help get you started developing with Vue 3 in Vite.
 
 ## Recommended IDE Setup

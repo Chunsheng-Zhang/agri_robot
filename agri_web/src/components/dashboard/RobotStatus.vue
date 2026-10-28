@@ -1,111 +1,27 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import {
-  Cpu,
-  Odometer,
-  Compass,
-  Lightning,
-  Location,
-} from '@element-plus/icons-vue'
-import { getRobotStatus } from '../../api/robot'
+import { computed } from 'vue'
+import { Cpu, Odometer, Compass, Lightning, Location } from '@element-plus/icons-vue'
+import { useRealtime, modeText, numberText } from '../../composables/useRealtime'
 
-const robot = ref({
-  name: '履带式农业机器人 01',
-  online: false,
-  mode: '加载中',
-  speed: 0,
-  heading: 0,
-  battery: 0,
-  longitude: 120.101,
-  latitude: 30.201,
-  lastUpdated: '',
-})
-
-const loading = ref(false)
-
-let refreshTimer: ReturnType<typeof setInterval> | undefined
-
-/**
- * 获取机器人最新状态
- */
-async function refreshData(): Promise<void> {
-  // 避免上一次请求尚未完成时重复发起请求
-  if (loading.value) return
-
-  loading.value = true
-
-  try {
-    const data = await getRobotStatus()
-
-    robot.value.online = data.online
-
-    robot.value.mode =
-      data.mode === 'standby'
-        ? '待命'
-        : data.mode
-
-    robot.value.speed = data.speed ?? 0
-    robot.value.heading = data.heading ?? 0
-
-    robot.value.battery = Math.min(
-      100,
-      Math.max(0, data.battery ?? 0),
-    )
-
-    robot.value.lastUpdated = data.timestamp
-  } catch (error) {
-    console.error('获取机器人状态失败：', error)
-
-    robot.value.online = false
-    robot.value.mode = '连接异常'
-  } finally {
-    loading.value = false
+const { robot: state, devices, poseFresh, robotFresh, safetyFresh, isFresh, refresh } = useRealtime()
+const robot = computed(() => {
+  const pose = poseFresh.value ? state.value : null
+  const gnss = isFresh(devices.value?.gnss) ? devices.value?.gnss : null
+  return {
+    name: state.value?.robot_id ?? '农业机器人',
+    online: poseFresh.value,
+    mode: safetyFresh.value ? modeText(devices.value?.safety.owner) : '控制模式未知',
+    speed: pose?.speed, heading: pose?.heading, angularSpeed: pose?.angular_speed,
+    battery: robotFresh.value ? state.value?.battery : null,
+    longitude: gnss?.longitude, latitude: gnss?.latitude,
+    x: pose?.position_x, y: pose?.position_y,
+    lastUpdated: pose?.last_odom_time ?? '',
   }
+})
+function formatTime(value: string) {
+  return value ? new Date(value).toLocaleTimeString() : '--'
 }
-
-/**
- * 格式化最后更新时间
- */
-function formatTime(value: string): string {
-  if (!value) return '--'
-
-  const date = new Date(value)
-
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-
-  return date.toLocaleTimeString()
-}
-
-/**
- * 组件加载后立即获取状态，并每秒自动刷新
- */
-onMounted(() => {
-  void refreshData()
-
-  refreshTimer = setInterval(() => {
-    void refreshData()
-  }, 1000)
-})
-
-/**
- * 组件销毁时清除定时器
- */
-onUnmounted(() => {
-  if (refreshTimer !== undefined) {
-    clearInterval(refreshTimer)
-    refreshTimer = undefined
-  }
-})
-
-/**
- * 暴露刷新函数，兼容 DashboardView.vue 的手动刷新功能
- */
-defineExpose({
-  refreshData,
-})
-
+defineExpose({ refreshData: refresh })
 </script>
 
 <template>
@@ -119,7 +35,7 @@ defineExpose({
           effect="light"
           size="small"
         >
-          {{ robot.online ? '已连接' : '未连接' }}
+          {{ robot.online ? '位姿在线' : '位姿未更新' }}
         </el-tag>
       </div>
     </template>
@@ -137,7 +53,7 @@ defineExpose({
         </div>
 
         <div class="robot-subtitle">
-          履带式农业机器人
+          MGX23 定位 · 标准底盘接口
         </div>
       </div>
 
@@ -165,7 +81,7 @@ defineExpose({
           行驶速度
         </div>
         <div class="status-value">
-          {{ robot.speed.toFixed(2) }}
+          {{ numberText(robot.speed) }}
           <span class="status-unit">m/s</span>
         </div>
       </div>
@@ -173,10 +89,10 @@ defineExpose({
       <div class="status-item">
         <div class="status-label">
           <el-icon><Compass /></el-icon>
-          航向角
+          ROS 航向角（东 0°，逆时针）
         </div>
         <div class="status-value">
-          {{ robot.heading.toFixed(1) }}°
+          {{ numberText(robot.heading, 1) }}°
         </div>
       </div>
 
@@ -186,19 +102,19 @@ defineExpose({
           电池电量
         </div>
         <div class="status-value">
-          {{ robot.battery.toFixed(0) }}%
+          {{ robot.battery == null ? '未接入' : numberText(robot.battery, 0) + '%' }}
         </div>
       </div>
     </div>
 
-    <div class="battery-section">
+    <div v-if="robot.battery != null" class="battery-section">
       <div class="battery-heading">
         <span>电量状态</span>
-        <span>{{ robot.battery.toFixed(0) }}%</span>
+        <span>{{ numberText(robot.battery, 0) }}%</span>
       </div>
 
       <el-progress
-        :percentage="robot.battery"
+        :percentage="Math.min(100, Math.max(0, robot.battery))"
         :stroke-width="8"
         :show-text="false"
         status="success"
@@ -215,20 +131,25 @@ defineExpose({
     <div class="location-grid">
       <div class="location-item">
         <span>经度</span>
-        <strong>{{ robot.longitude.toFixed(6) }}</strong>
+        <strong>{{ numberText(robot.longitude, 8) }}</strong>
       </div>
 
       <div class="location-item">
         <span>纬度</span>
-        <strong>{{ robot.latitude.toFixed(6) }}</strong>
+        <strong>{{ numberText(robot.latitude, 8) }}</strong>
       </div>
+    </div>
+
+    <div class="location-grid">
+      <div class="location-item"><span>平面 X / Y（m）</span><strong>{{ numberText(robot.x) }} / {{ numberText(robot.y) }}</strong></div>
+      <div class="location-item"><span>角速度（rad/s）</span><strong>{{ numberText(robot.angularSpeed, 3) }}</strong></div>
     </div>
 
     <el-alert
       class="update-alert"
       :title="
         robot.lastUpdated
-          ? `最近更新时间：${formatTime(robot.lastUpdated)}`
+          ? `位姿接收时间：${formatTime(robot.lastUpdated)}`
           : '等待机器人状态数据'
       "
       :type="robot.online ? 'success' : 'warning'"

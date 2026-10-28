@@ -1,175 +1,50 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed } from 'vue'
+import { useRealtime, taskText, numberText } from '../../composables/useRealtime'
+import type { TaskSnapshot } from '../../api/robot'
 
-interface Task {
-  id: string
-  name: string
-  area: string
-  progress: number
-  status: '进行中' | '待执行' | '已完成'
-}
-
-const tasks = ref<Task[]>([
-  {
-    id: 'TASK-001',
-    name: '东侧地块耕整作业',
-    area: '8.5 亩',
-    progress: 76,
-    status: '进行中',
-  },
-  {
-    id: 'TASK-002',
-    name: '西侧地块覆盖作业',
-    area: '6.2 亩',
-    progress: 0,
-    status: '待执行',
-  },
-  {
-    id: 'TASK-003',
-    name: '北侧地块路径测试',
-    area: '2.8 亩',
-    progress: 100,
-    status: '已完成',
-  },
-])
-
-function statusType(status: Task['status']) {
-  const types: Record<Task['status'], 'success' | 'warning' | 'info'> = {
-    进行中: 'success',
-    待执行: 'warning',
-    已完成: 'info',
-  }
-
-  return types[status]
-}
-
-function viewTask(task: Task) {
-  ElMessage.info(`任务 ${task.id} 的详情功能将在后续开发`)
-}
+const { devices, isFresh, safetyFresh } = useRealtime()
+const rows = computed(() => {
+  const entries: [string, string, TaskSnapshot | undefined][] = [
+    ['waypoint', '多目标点导航', devices.value?.waypoint],
+    ['tracking', 'Pure Pursuit 跟踪', devices.value?.tracking],
+    ['planning', '全覆盖路径规划', devices.value?.planning],
+  ]
+  return entries.map(([key, name, task]) => {
+    const fresh = isFresh(task)
+    let progress = '--'
+    if (fresh && task && key === 'waypoint' && task.count) {
+      progress = task.state === 'COMPLETED' ? '全部目标点已完成'
+        : `目标 ${Math.min((task.index ?? 0) + 1, task.count)} / ${task.count}`
+    } else if (fresh && task && key === 'tracking' && task.length) {
+      progress = `${numberText(task.progress, 1)} / ${numberText(task.length, 1)} m`
+    }
+    return { key, name, state: fresh ? taskText(task?.state) : '节点未更新',
+      active: safetyFresh.value && devices.value?.safety.owner === key,
+      progress, reason: fresh ? (task?.reason || '—') : '等待实时状态' }
+  })
+})
 </script>
 
 <template>
-  <el-card class="panel-card task-card" shadow="never">
-    <template #header>
-      <div class="panel-header">
-        <span>作业任务</span>
-
-        <el-tag type="info" effect="light" size="small">
-          {{ tasks.length }} 项任务
-        </el-tag>
-      </div>
-    </template>
-
-    <el-table
-      :data="tasks"
-      row-key="id"
-      style="width: 100%"
-    >
-      <el-table-column
-        prop="id"
-        label="任务编号"
-        min-width="120"
-      />
-
-      <el-table-column
-        prop="name"
-        label="任务名称"
-        min-width="170"
-        show-overflow-tooltip
-      />
-
-      <el-table-column
-        prop="area"
-        label="作业面积"
-        width="100"
-      />
-
-      <el-table-column
-        label="作业进度"
-        min-width="150"
-      >
-        <template #default="{ row }">
-          <div class="progress-cell">
-            <el-progress
-              :percentage="row.progress"
-              :stroke-width="7"
-              :show-text="false"
-              :status="row.progress === 100 ? 'success' : undefined"
-            />
-
-            <span>{{ row.progress }}%</span>
-          </div>
-        </template>
+  <el-card class="panel-card" shadow="never">
+    <template #header><div class="task-heading"><span>实时任务状态</span><el-tag type="info">ROS 2 状态反馈</el-tag></div></template>
+    <el-table :data="rows" row-key="key">
+      <el-table-column prop="name" label="功能" min-width="170" />
+      <el-table-column label="状态" min-width="140">
+        <template #default="{ row }"><el-tag :type="row.active ? 'success' : 'info'">{{ row.state }}</el-tag></template>
       </el-table-column>
-
-      <el-table-column
-        label="状态"
-        width="100"
-      >
-        <template #default="{ row }">
-          <el-tag
-            :type="statusType(row.status)"
-            effect="light"
-            size="small"
-          >
-            {{ row.status }}
-          </el-tag>
-        </template>
+      <el-table-column prop="progress" label="任务进度" min-width="180" />
+      <el-table-column label="控制权" width="110">
+        <template #default="{ row }">{{ row.active ? '已取得' : '未取得' }}</template>
       </el-table-column>
-
-      <el-table-column
-        label="操作"
-        width="90"
-        fixed="right"
-      >
-        <template #default="{ row }">
-          <el-button
-            type="success"
-            link
-            @click="viewTask(row)"
-          >
-            查看
-          </el-button>
-        </template>
-      </el-table-column>
+      <el-table-column prop="reason" label="原因 / 说明" min-width="220" show-overflow-tooltip />
     </el-table>
   </el-card>
 </template>
 
 <style scoped>
-.panel-card {
-  border-radius: 10px;
-  border-color: #e5eae7;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  color: #263b30;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.progress-cell {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.progress-cell .el-progress {
-  flex: 1;
-  min-width: 40px;
-}
-
-.progress-cell span {
-  width: 35px;
-  flex-shrink: 0;
-  color: #65736a;
-  font-size: 12px;
-  text-align: right;
-}
+.task-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.panel-card { border: 1px solid #e8eee9; border-radius: 10px; }
 </style>
 

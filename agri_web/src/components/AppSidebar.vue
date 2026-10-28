@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useRealtime } from '../composables/useRealtime'
 import {
   Monitor,
   MapLocation,
@@ -8,6 +10,9 @@ import {
   Setting,
   Connection,
 } from '@element-plus/icons-vue'
+
+const { robot, robotFresh, poseFresh, error } = useRealtime()
+const bridgeConnected = computed(() => robotFresh.value && robot.value?.ros_connected === true)
 
 const menuItems = [
   { path: '/', title: '系统总览', icon: Monitor },
@@ -61,11 +66,11 @@ const menuItems = [
         </div>
 
         <div class="connection-status">
-          <span class="status-dot"></span>
-          前端演示模式
+          <span class="status-dot" :class="{ disconnected: !poseFresh }"></span>
+          {{ poseFresh ? '机器人位姿在线' : bridgeConnected ? 'ROS 桥接在线' : '后端 / ROS 未连接' }}
         </div>
 
-        <div class="connection-note">真实设备尚未连接</div>
+        <div class="connection-note">{{ error || (poseFresh ? '正在显示实时数据' : '等待有效定位与设备数据') }}</div>
       </div>
 
       <div class="sidebar-version">AGRI ROBOT · WEB v0.1.0</div>
@@ -179,6 +184,8 @@ const menuItems = [
   border-radius: 50%;
   background: #35bd82;
 }
+
+.status-dot.disconnected { background: #dba956; }
 
 .connection-note {
   margin-top: 9px;

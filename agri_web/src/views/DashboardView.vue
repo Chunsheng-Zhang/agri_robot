@@ -8,6 +8,8 @@ import RobotStatus from '../components/dashboard/RobotStatus.vue'
 import FieldMap from '../components/dashboard/FieldMap.vue'
 import TaskList from '../components/dashboard/TaskList.vue'
 import FieldCoordinate from '../components/dashboard/FieldCoordinate.vue'
+import SafetyStatus from '../components/dashboard/SafetyStatus.vue'
+import CameraMonitor from '../components/dashboard/CameraMonitor.vue'
 
 const robotStatusRef = ref<{
   refreshData: () => Promise<void>
@@ -58,6 +60,8 @@ async function refreshDashboard() {
 
     <StatisticsCards />
 
+    <SafetyStatus />
+
     <!-- 农田经纬度输入 -->
     <div class="coordinate-section">
       <FieldCoordinate />
@@ -76,6 +80,7 @@ async function refreshDashboard() {
     <div class="task-section">
       <TaskList />
     </div>
+    <CameraMonitor />
   </div>
 </template>
 

@@ -1,44 +1,15 @@
 <script setup lang="ts">
-import {
-  MapLocation,
-  Clock,
-  Odometer,
-  DataLine,
-} from '@element-plus/icons-vue'
+import { computed } from 'vue'
+import { MapLocation, Clock, Odometer, DataLine } from '@element-plus/icons-vue'
+import { useRealtime, numberText } from '../../composables/useRealtime'
 
-interface StatisticItem {
-  title: string
-  value: string
-  unit: string
-  icon: typeof MapLocation
-}
-
-const statistics: StatisticItem[] = [
-  {
-    title: '今日作业面积',
-    value: '12.6',
-    unit: '亩',
-    icon: MapLocation,
-  },
-  {
-    title: '累计作业时长',
-    value: '03:28',
-    unit: 'h',
-    icon: Clock,
-  },
-  {
-    title: '平均作业速度',
-    value: '4.2',
-    unit: 'km/h',
-    icon: Odometer,
-  },
-  {
-    title: '路径覆盖率',
-    value: '96.8',
-    unit: '%',
-    icon: DataLine,
-  },
-]
+const { robot, poseFresh, robotFresh } = useRealtime()
+const statistics = computed(() => [
+  { title: '当前观测速度', value: numberText(poseFresh.value ? robot.value?.speed : null), unit: 'm/s', icon: Odometer },
+  { title: '当前观测角速度', value: numberText(poseFresh.value ? robot.value?.angular_speed : null, 3), unit: 'rad/s', icon: Clock },
+  { title: '参考路径点数', value: robotFresh.value ? String(robot.value?.reference_path_points ?? 0) : '--', unit: '点', icon: MapLocation },
+  { title: '已记录轨迹点数', value: robotFresh.value ? String(robot.value?.tracked_path_points ?? 0) : '--', unit: '点', icon: DataLine },
+])
 </script>
 
 <template>
