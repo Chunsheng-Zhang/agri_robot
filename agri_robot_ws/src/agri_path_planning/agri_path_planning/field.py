@@ -11,6 +11,12 @@ from shapely.geometry.polygon import orient
 def load_field(filename, frame):
     with Path(filename).expanduser().open(encoding='utf-8') as stream:
         data = json.load(stream) if str(filename).endswith(('.json', '.geojson')) else yaml.safe_load(stream)
+    return field_from_data(data, frame)
+
+
+def field_from_data(data, frame):
+    if not isinstance(data, dict):
+        raise ValueError('Field boundary must be a JSON object')
     if data.get('type') in ('Feature', 'Polygon'):
         geom = shape(data['geometry'] if data['type'] == 'Feature' else data)
         if not isinstance(geom, Polygon):

@@ -5,6 +5,7 @@ import math
 from time import monotonic
 
 from rclpy.node import Node
+from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import TransformStamped, Vector3Stamped
 from nav_msgs.msg import Odometry
@@ -23,7 +24,8 @@ class Localization(Node):
         for name, default in {'sensor_timeout': 0.5, 'heading_offset': 0.0,
                               'antenna_x': 0.0, 'antenna_y': 0.0,
                               'require_fix_status': False}.items():
-            self.declare_parameter(name, default)
+            self.declare_parameter(name, default, ParameterDescriptor(read_only=True,
+                description='Fixed localization calibration; change YAML and restart the core.'))
         self.timeout = finite_positive(self.get_parameter('sensor_timeout').value, 'sensor_timeout')
         self.offset = float(self.get_parameter('heading_offset').value)
         self.ax = float(self.get_parameter('antenna_x').value)

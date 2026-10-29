@@ -1,14 +1,13 @@
-import csv
-import json
 import math
-from datetime import datetime
-from pathlib import Path as FilePath
+from time import monotonic
 
 from geometry_msgs.msg import PoseStamped, Vector3Stamped
 from nav_msgs.msg import Path
+from rclpy.qos import QoSProfile, DurabilityPolicy
 
 from agri_base.coordinates import finite_positive
-from agri_base.runtime import LATCHED, TaskNode, run, yaw_of
+from agri_base.runtime import TaskNode, run, yaw_of
+from agri_base.recording import open_recording
 from .controller import Polyline, PurePursuit
 
 
@@ -27,14 +26,40 @@ class PathTracker(TaskNode):
         self.controller = None
         self.record_file, self.record_writer = None, None
         self.record_count = 0
+        self.last_plot = -math.inf
         self.trajectory = Path()
         self.trajectory.header.frame_id = 'map'
         self.error_pub = self.create_publisher(Vector3Stamped, '/tracking/error', 1)
         self.track_pub = self.create_publisher(Path, '/tracked_path', 1)
-        self.create_subscription(Path, '/reference_path', self.on_path, LATCHED)
+        self.path_subscription = self.create_subscription(Path, '/reference_path', self.on_path, 10)
+        self.path_transient = False
+        self.create_timer(1.0, self.refresh_path_qos)
         self.create_timer(1 / self.get_parameter('control_rate').value, self.tick)
 
+    def refresh_path_qos(self):
+        publishers = self.get_publishers_info_by_topic('/reference_path')
+        if len(publishers) > 1:
+            self.pending_path = None
+            if self.state in ('RUNNING', 'PAUSED', 'ACQUIRING'):
+                self.generation += 1
+                self.finish('FAULT', 'Multiple reference path publishers')
+            return
+        if not publishers:
+            return
+        transient = publishers[0].qos_profile.durability == DurabilityPolicy.TRANSIENT_LOCAL
+        if transient != self.path_transient:
+            self.destroy_subscription(self.path_subscription)
+            qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL if transient else DurabilityPolicy.VOLATILE)
+            self.path_subscription = self.create_subscription(Path, '/reference_path', self.on_path, qos)
+            self.path_transient = transient
+
     def on_path(self, msg):
+        if self.count_publishers('/reference_path') > 1:
+            self.pending_path = None
+            if self.state in ('RUNNING', 'PAUSED', 'ACQUIRING'):
+                self.generation += 1
+                self.finish('FAULT', 'Multiple reference path publishers')
+            return
         if self.state in ('RUNNING', 'PAUSED', 'ACQUIRING'):
             return  # Explicit cancel/start is required to replace an executing path.
         try:
@@ -53,6 +78,8 @@ class PathTracker(TaskNode):
             self.get_logger().warning(str(exc))
 
     def prepare(self):
+        if self.count_publishers('/reference_path') != 1:
+            raise ValueError('Require exactly one reference path publisher')
         if self.pending_path is None:
             raise ValueError('No validated forward path received')
         line = Polyline([(p.pose.position.x, p.pose.position.y) for p in self.pending_path.poses])
@@ -62,39 +89,20 @@ class PathTracker(TaskNode):
         self.controller = PurePursuit(line, **{name: self.get_parameter(name).value for name in (
             'lookahead', 'speed', 'max_angular', 'completion_tolerance', 'search_window')})
         self.trajectory.poses = []
+        self.last_plot = -math.inf
+        self.track_pub.publish(self.trajectory)
         folder = self.get_parameter('trajectory_directory').value
         if folder:
-            target = FilePath(folder).expanduser()
-            target.mkdir(parents=True, exist_ok=True)
-            name = datetime.now().strftime('track_%Y%m%d_%H%M%S_%f.csv')
-            self.record_file = (target / name).open('x', newline='', encoding='utf-8')
-            try:
-                metadata = {
-                    'schema_version': 1, 'trajectory_csv': name,
-                    'frame_id': 'map', 'position_reference': 'base_link',
-                    'projection': self.frame.identity,
-                    'axes': {'x': 'UTM grid east', 'y': 'UTM grid north'},
-                    'units': {'position': 'm', 'angle': 'rad', 'time': 's'},
-                    'time_source': '/odom header.stamp (ROS time)',
-                    # Capture the exact reference received, including externally supplied paths.
-                    'reference_path': {
-                        'frame_id': self.pending_path.header.frame_id,
-                        'points': [{'x': p.pose.position.x, 'y': p.pose.position.y,
-                                    'yaw': yaw_of(p.pose.orientation)} for p in self.pending_path.poses],
-                    },
-                }
-                with (target / FilePath(name).with_suffix('.json')).open('x', encoding='utf-8') as stream:
-                    json.dump(metadata, stream, ensure_ascii=False, allow_nan=False, indent=2)
-                self.record_writer = csv.writer(self.record_file)
-                self.record_writer.writerow(['stamp', 'x', 'y', 'yaw', 'cross_track', 'heading_error', 'progress'])
-            except (OSError, ValueError):
-                self.close_recording()
-                raise
+            points = [{'x': p.pose.position.x, 'y': p.pose.position.y, 'yaw': yaw_of(p.pose.orientation)}
+                      for p in self.pending_path.poses]
+            self.record_file, self.record_writer = open_recording(folder, 'track', self.frame, points,
+                ['stamp', 'x', 'y', 'yaw', 'cross_track', 'heading_error', 'progress'])
             self.record_count = 0
 
     def finish(self, state, reason=''):
         super().finish(state, reason)
         self.close_recording()
+        self.track_pub.publish(self.trajectory)
 
     def close_recording(self):
         if self.record_file is not None:
@@ -137,7 +145,9 @@ class PathTracker(TaskNode):
                         self.finish('FAULT', f'Trajectory write failed: {exc}')
                         return
                 self.trajectory.header.stamp = error.header.stamp
-                self.track_pub.publish(self.trajectory)
+                if monotonic() - self.last_plot >= 0.5:
+                    self.track_pub.publish(self.trajectory)
+                    self.last_plot = monotonic()
             if distance > self.get_parameter('max_path_error').value:
                 self.finish('FAULT', 'Path deviation exceeded')
             elif done:

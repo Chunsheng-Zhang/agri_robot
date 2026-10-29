@@ -1,0 +1,7 @@
+string source
+bool enable
+uint64 mode_revision
+uint64 task_generation
+---
+bool success
+string message

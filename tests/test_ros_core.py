@@ -112,6 +112,7 @@ def test_services_safety_and_closed_loop(tmp_path):
             bench.destroy_client(client)
             return result
 
+        assert service(Trigger, '/system/mode/waypoint').success
         until(lambda: waypoint.healthy() and safety.healthy() and safety.lidar_ok())
         assert safety.gate.emergency_stop and state['v'] == 0
         assert service(SetBool, '/safety/emergency_stop', data=False).success
@@ -139,6 +140,8 @@ def test_services_safety_and_closed_loop(tmp_path):
         until(lambda: not safety.gate.owner and state['v'] == 0)
 
         # Track a straight path beginning at current pose, with a second task contending.
+        assert service(Trigger, '/system/mode/coverage').success
+        until(tracker.healthy)
         state['yaw'] = 0.0
         path = Path()
         path.header.frame_id = 'map'
@@ -152,8 +155,7 @@ def test_services_safety_and_closed_loop(tmp_path):
         until(lambda: tracker.pending_path is not None)
         assert service(Trigger, '/tracking/start').success
         until(lambda: tracker.state == 'RUNNING')
-        assert service(Trigger, '/waypoint/start').success  # async acknowledgement
-        until(lambda: waypoint.state == 'FAULT')
+        assert not service(Trigger, '/waypoint/start').success  # Different work mode cannot acquire control.
         assert safety.gate.owner == 'tracking'
         until(lambda: tracker.state == 'COMPLETED', 10)
         until(lambda: state['v'] == 0 and not safety.gate.owner)
@@ -175,6 +177,8 @@ def test_services_safety_and_closed_loop(tmp_path):
             assert recorded.header.frame_id == 'map'
 
         # Localization watchdog revokes ownership and does not restart on recovery.
+        assert service(Trigger, '/system/mode/waypoint').success
+        until(waypoint.healthy)
         assert service(Trigger, '/waypoint/start').success
         until(lambda: waypoint.state == 'RUNNING')
         state['sensors'] = False

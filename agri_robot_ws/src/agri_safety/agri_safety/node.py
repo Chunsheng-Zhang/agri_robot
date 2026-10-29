@@ -7,6 +7,7 @@ from pathlib import Path
 from time import monotonic
 
 from rclpy.node import Node
+from rcl_interfaces.msg import ParameterDescriptor
 from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import Twist, TwistStamped, Vector3Stamped
 from nav_msgs.msg import Odometry
@@ -18,11 +19,18 @@ from agri_base.coordinates import finite_positive
 from agri_base.runtime import LATCHED, fresh_stamp, run, stamp_seconds, yaw_of
 from .gate import CommandGate
 from .obstacles import ScanGeometry, ObstacleLatch
+from agri_interfaces.srv import AcquireControl
 
 
 class Safety(Node):
     def __init__(self):
         super().__init__('safety')
+        self.declare_parameter('initial_mode', 'base', ParameterDescriptor(read_only=True))
+        self.system_mode = self.get_parameter('initial_mode').value
+        if self.system_mode not in ('base', 'waypoint', 'coverage'):
+            raise ValueError('Invalid initial system mode')
+        self.mode_revision = 0
+        self.control_lease = None
         defaults = {'max_linear_speed': 0.3, 'max_lateral_speed': 0.3,
                     'max_angular_speed': 0.6, 'command_timeout': 0.25,
                     'sensor_timeout': 0.5, 'max_path_error': 2.0, 'publish_rate': 20.0,
@@ -35,7 +43,8 @@ class Safety(Node):
                     'rear_half_angle': math.pi / 3, 'min_valid_fraction': 0.5,
                     'min_coverage_fraction': 0.85, 'event_directory': ''}
         for name, value in defaults.items():
-            self.declare_parameter(name, value)
+            self.declare_parameter(name, value, ParameterDescriptor(read_only=True,
+                description='Physical safety configuration; change YAML and restart the core.'))
         self.get = lambda name: self.get_parameter(name).value
         for name in ('sensor_timeout', 'joy_timeout', 'scan_timeout', 'publish_rate'):
             finite_positive(self.get(name), name)
@@ -80,6 +89,10 @@ class Safety(Node):
         self.create_subscription(Vector3Stamped, '/tracking/error', self.on_error, 1)
         self.create_service(SetBool, '/safety/emergency_stop', self.stop_service)
         self.create_service(Trigger, '/safety/obstacle/reset', self.reset_obstacle)
+        self.create_service(AcquireControl, '/safety/acquire_control', self.acquire_control)
+        for mode in ('base', 'waypoint', 'coverage'):
+            self.create_service(Trigger, f'/system/mode/{mode}',
+                                lambda req, res, selected=mode: self.select_mode(selected, res))
         for source in ('waypoint', 'tracking', 'manual', 'web'):
             self.create_subscription(TwistStamped, f'/control/{source}/cmd_vel',
                                      lambda msg, s=source: self.on_command(s, msg), 1)
@@ -142,7 +155,8 @@ class Safety(Node):
         source = source or self.gate.owner or 'waypoint'
         common = (self.count_publishers('/cmd_vel') == 1
                   and (not self.get('require_joy') or self.joystick_ok()))
-        return common and (self.joystick_ok() if source == 'manual' else self.localization_ok())
+        return common and (self.joystick_ok() if source == 'manual' else
+                           (True if source == 'web' else self.localization_ok()))
 
     def on_joy(self, msg):
         i = self.get('joy_estop_button')
@@ -218,6 +232,7 @@ class Safety(Node):
                     and (not self.get('require_joy') or (self.joystick_ok() and self.joy_neutral)))
         result = self.gate.stop(active, reset_ok)
         if result:
+            self.control_lease = None
             self.event('EMERGENCY_STOP' if active else 'EMERGENCY_RESET', 'Explicit operator request')
         self.tick()
         return result
@@ -240,7 +255,38 @@ class Safety(Node):
         self.tick()
         return response
 
+    def select_mode(self, mode, response):
+        if mode != self.system_mode:
+            self.gate.revoke('Work mode changed; explicit start required')
+            self.control_lease = None
+            self.pub.publish(Twist())
+            self.system_mode = mode
+            self.mode_revision += 1
+            self.event('MODE_CHANGED', mode)
+        response.success = True
+        response.message = f'{self.system_mode}; idle until explicit start'
+        self.tick()
+        return response
+
+    def acquire_control(self, request, response):
+        identity = (request.source, request.mode_revision, request.task_generation)
+        if request.mode_revision != self.mode_revision:
+            response.success, response.message = False, 'Work mode changed; stale request rejected'
+            return response
+        if not request.enable and self.gate.owner and self.control_lease != identity:
+            response.success, response.message = False, 'Stale lease release rejected'
+            return response
+        self.enable(request.source, SetBool.Request(data=request.enable), response)
+        if response.success:
+            self.control_lease = identity if request.enable else None
+        return response
+
     def enable(self, source, request, response):
+        allowed = source == 'manual' or (source == 'web' and self.system_mode == 'base') or self.system_mode == {
+            'waypoint': 'waypoint', 'tracking': 'coverage'}.get(source)
+        if request.data and not allowed:
+            response.success, response.message = False, 'Select the matching work mode first'
+            return response
         health = self.healthy(source)
         can_move = (health and not self.obstacle.active and (not self.get('require_lidar') or self.lidar_ok()))
         if source == 'manual' and request.data:
@@ -250,6 +296,8 @@ class Safety(Node):
                 self.gate.revoke('Explicit manual takeover')
         response.success = self.gate.enable(source, request.data, can_move, monotonic(),
                                             self.get_clock().now().nanoseconds * 1e-9)
+        if response.success:
+            self.control_lease = None  # Epoch-aware caller installs its own identity after this returns.
         response.message = self.gate.reason if response.success else 'Busy, stopped, not neutral, or required sensor unavailable'
         self.tick()
         return response
@@ -274,7 +322,10 @@ class Safety(Node):
             self.obstacle.clear_since = None
         if self.obstacle.active and self.gate.owner in ('manual', 'web'):
             self.gate.revoke('Obstacle stop; explicit manual rearm required')
+        previous_owner = self.gate.owner
         v, w = self.gate.output(monotonic(), self.healthy())
+        if previous_owner and not self.gate.owner:
+            self.event('CONTROL_STOP', self.gate.reason)
         msg = Twist()
         if not self.obstacle.active:
             msg.linear.x, msg.linear.y, msg.angular.z = v, self.gate.lateral_output, w
@@ -283,6 +334,9 @@ class Safety(Node):
         self.status_pub.publish(String(data=json.dumps({
             'stamp': self.get_clock().now().nanoseconds * 1e-9,
             'owner': self.gate.owner, 'emergency_stop': self.gate.emergency_stop,
+            'mode': self.system_mode, 'mode_revision': self.mode_revision,
+            'limits': {'linear': self.gate.max_linear, 'angular': self.gate.max_angular,
+                       'path_error': self.gate.max_path_error},
             'estop_pressed': self.joy_pressed, 'obstacle_stop': self.obstacle.active,
             'motion_inhibited': inhibited, 'reason': self.gate.reason if self.gate.emergency_stop
                 else (self.obstacle.reason if self.obstacle.active else self.gate.reason),

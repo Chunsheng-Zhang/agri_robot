@@ -23,7 +23,8 @@ def nodes(context):
     result = [
         Node(package='agri_base', executable='localization', parameters=[params], output='screen'),
         Node(package='agri_safety', executable='safety',
-             parameters=[params, {'require_joy': require_joy, 'event_directory': value('event_directory')}], output='screen'),
+             parameters=[params, {'initial_mode': mode, 'require_joy': require_joy,
+                                  'event_directory': value('event_directory')}], output='screen'),
         Node(package='agri_base', executable='chassis_adapter', parameters=[params], output='screen'),
     ]
     if enabled('start_joy'):
@@ -87,10 +88,13 @@ def nodes(context):
                            additional_env=extra_env,
                            remappings=[('cmd_vel', '/base/driver_cmd_vel')], output='screen'))
     # External differential/track drivers subscribe only to /base/driver_cmd_vel.
-    if mode == 'waypoint':
-        result.append(Node(package='agri_waypoint', executable='waypoint',
-                           parameters=[params, {'waypoints_file': value('waypoints_file')}], output='screen'))
-    if mode == 'coverage':
+    # Controllers stay resident. Safety alone selects which autonomous source may acquire control.
+    result.append(Node(package='agri_waypoint', executable='waypoint',
+                       parameters=[params, {'waypoints_file': value('waypoints_file'),
+                                            'trajectory_directory': value('trajectory_directory')}], output='screen'))
+    result.append(Node(package='agri_path_tracking', executable='path_tracker',
+                       parameters=[params, {'trajectory_directory': value('trajectory_directory')}], output='screen'))
+    if enabled('start_planner'):
         result += [
             Node(package='opennav_coverage', executable='opennav_coverage',
                  name='coverage_server', parameters=[params], output='screen'),
@@ -100,8 +104,6 @@ def nodes(context):
             Node(package='agri_path_planning', executable='coverage_adapter',
                  parameters=[params, {'boundary_file': value('boundary_file'),
                                       'output_directory': value('path_directory')}], output='screen'),
-            Node(package='agri_path_tracking', executable='path_tracker',
-                 parameters=[params, {'trajectory_directory': value('trajectory_directory')}], output='screen'),
         ]
     return result
 
@@ -120,6 +122,7 @@ def generate_launch_description():
         'publish_laser_tf': 'true', 'start_camera': 'false', 'monitor_camera': 'false',
         'start_video': 'false',
         'event_directory': '',
+        'start_planner': 'true',
     }
     return LaunchDescription([
         *[DeclareLaunchArgument(name, default_value=default) for name, default in defaults.items()],

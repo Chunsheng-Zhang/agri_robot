@@ -30,6 +30,13 @@ def test_vendor_launch_selection_without_starting_devices(tmp_path, monkeypatch)
     assert packages.count('joy') == 1
     assert 'ydlidar_ros2_driver' in packages and 'web_video_server' in packages
     assert 'yahboomcar_base_node' not in packages
+    assert 'agri_waypoint' in packages and 'agri_path_tracking' in packages and 'agri_path_planning' in packages
+    context.launch_configurations['start_planner'] = 'false'
+    minimal = module.nodes(context)
+    minimal_packages = [perform_substitutions(context, node.node_package) if not isinstance(node.node_package, str)
+                        else node.node_package for node in minimal if isinstance(node, Node)]
+    assert 'agri_path_planning' not in minimal_packages and 'opennav_coverage' not in minimal_packages
+    assert 'agri_path_tracking' in minimal_packages
     camera_groups = [action for action in actions if isinstance(action, GroupAction)]
     group = next(g for g in camera_groups if any(isinstance(a, SetParameter) for a in g.get_sub_entities()))
     include = next(a for a in group.get_sub_entities() if isinstance(a, IncludeLaunchDescription))

@@ -50,6 +50,9 @@ def test_existing_opennav_action_to_reference_path(tmp_path, headland_width, exp
         bench.create_subscription(PathMsg, '/reference_path', lambda p: received.append(p), LATCHED)
         origin = bench.create_publisher(String, '/localization/origin', LATCHED)
         origin.publish(String(data=json.dumps(LocalFrame(36.6468527633281, 117.021433066391).identity)))
+        modes = bench.create_publisher(String, '/safety/status', LATCHED)
+        bench.create_timer(0.05, lambda: modes.publish(String(data=json.dumps(
+            {'mode': 'coverage', 'mode_revision': 0, 'owner': ''}))))
 
         def until(predicate, timeout=20):
             deadline = monotonic() + timeout
@@ -70,7 +73,7 @@ def test_existing_opennav_action_to_reference_path(tmp_path, headland_width, exp
             future = lifecycle.call_async(request)
             until(future.done)
             assert future.result().success
-        until(lambda: adapter.origin_matches and adapter.client.server_is_ready())
+        until(lambda: adapter.origin_matches and adapter.client.server_is_ready() and adapter.mode_ready())
         plan = bench.create_client(Trigger, '/planning/plan')
         until(plan.service_is_ready)
         future = plan.call_async(Trigger.Request())

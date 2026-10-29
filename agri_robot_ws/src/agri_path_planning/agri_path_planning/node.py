@@ -9,6 +9,7 @@ from time import monotonic
 from action_msgs.msg import GoalStatus
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from rcl_interfaces.msg import SetParametersResult
 from nav_msgs.msg import Path
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
@@ -27,7 +28,8 @@ class CoverageAdapter(Node):
         defaults = {'boundary_file': '', 'output_directory': '', 'robot_width': 0.35,
                     'headland_width': 2.0, 'swath_angle': 0.0,
                     'sampling_distance': 0.1, 'planning_timeout': 120.0,
-                    'generate_decomp': False}
+                    'generate_decomp': False, 'route_mode': 'BOUSTROPHEDON',
+                    'angle_mode': 'SET_ANGLE', 'path_continuity': 'CONTINUOUS'}
         for name, value in defaults.items():
             self.declare_parameter(name, value)
         for name in ('robot_width', 'sampling_distance', 'planning_timeout'):
@@ -39,6 +41,7 @@ class CoverageAdapter(Node):
         self.path_pub = self.create_publisher(Path, '/reference_path', LATCHED)
         self.status = self.create_publisher(String, '/planning/status', LATCHED)
         self.create_subscription(String, '/localization/origin', self.on_origin, LATCHED)
+        self.create_subscription(String, '/safety/status', self.on_safety, LATCHED)
         self.create_service(Trigger, '/planning/plan', self.plan)
         self.create_service(Trigger, '/planning/cancel', self.cancel)
         self.state, self.reason = 'IDLE', ''
@@ -46,15 +49,47 @@ class CoverageAdapter(Node):
         self.token = 0
         self.goal_handle = None
         self.deadline = math.inf
+        self.mode, self.mode_revision, self.safety_time, self.owner = None, None, -math.inf, ''
+        self.add_on_set_parameters_callback(self.configure_idle)
         self.create_timer(0.2, self.tick)
+
+    def on_safety(self, msg):
+        data = json.loads(msg.data)
+        mode, revision = data.get('mode'), data.get('mode_revision')
+        if self.mode_revision is not None and revision != self.mode_revision:
+            if self.state == 'PLANNING':
+                self.cancel(None, Trigger.Response())
+            empty = Path()
+            empty.header.frame_id = 'map'
+            self.path_pub.publish(empty)
+        self.mode, self.mode_revision, self.safety_time, self.owner = mode, revision, monotonic(), data.get('owner', '')
+
+    def mode_ready(self):
+        return (self.mode == 'coverage' and monotonic() - self.safety_time < 1.0
+                and not self.owner and self.count_publishers('/safety/status') == 1)
+
+    def configure_idle(self, parameters):
+        if self.state == 'PLANNING' or self.owner:
+            return SetParametersResult(successful=False, reason='Cancel active task before configuring planning')
+        choices = {'route_mode': ('BOUSTROPHEDON', 'SNAKE', 'SPIRAL'),
+                   'angle_mode': ('SET_ANGLE', 'BRUTE_FORCE'),
+                   'path_continuity': ('CONTINUOUS', 'DISCONTINUOUS')}
+        for p in parameters:
+            if p.name in choices and p.value not in choices[p.name]:
+                return SetParametersResult(successful=False, reason='Unsupported planning mode')
+            if isinstance(p.value, (int, float)) and not isinstance(p.value, bool):
+                if not math.isfinite(p.value) or (p.name != 'swath_angle' and (
+                        p.value < 0 or (p.value == 0 and p.name != 'headland_width'))):
+                    return SetParametersResult(successful=False, reason='Invalid planning parameter')
+        return SetParametersResult(successful=True)
 
     def on_origin(self, msg):
         self.origin_matches = json.loads(msg.data) == self.frame.identity
 
     def plan(self, request, response):
         response.success = False
-        if self.state == 'PLANNING' or not self.origin_matches or not self.client.server_is_ready():
-            response.message = 'Busy, coordinate origin unavailable, or coverage action unavailable'
+        if self.state == 'PLANNING' or not self.origin_matches or not self.client.server_is_ready() or not self.mode_ready():
+            response.message = 'Select coverage mode; require idle controls, matching origin and available planner'
             return response
         try:
             self.polygon = load_field(self.get_parameter('boundary_file').value, self.frame)
@@ -66,10 +101,10 @@ class CoverageAdapter(Node):
             goal.generate_path = True
             goal.headland_mode.mode = 'CONSTANT'
             goal.headland_mode.width = float(self.get_parameter('headland_width').value)
-            goal.swath_mode.mode, goal.swath_mode.objective = 'SET_ANGLE', 'LENGTH'
+            goal.swath_mode.mode, goal.swath_mode.objective = self.get_parameter('angle_mode').value, 'LENGTH'
             goal.swath_mode.best_angle = float(self.get_parameter('swath_angle').value)
-            goal.route_mode.mode = 'TSP' if goal.generate_decomp else 'BOUSTROPHEDON'
-            goal.path_mode.mode, goal.path_mode.continuity_mode = 'DUBIN', 'CONTINUOUS'
+            goal.route_mode.mode = 'TSP' if goal.generate_decomp else self.get_parameter('route_mode').value
+            goal.path_mode.mode, goal.path_mode.continuity_mode = 'DUBIN', self.get_parameter('path_continuity').value
             goal.path_mode.turn_point_distance = float(self.get_parameter('sampling_distance').value)
             rings = [self.polygon.exterior, *self.polygon.interiors]
             for ring in rings:
@@ -136,7 +171,7 @@ class CoverageAdapter(Node):
                     raise ValueError('Path outside local operating radius')
                 points.append((x, y))
             validate_path(points, self.polygon, self.get_parameter('robot_width').value)
-            if not self.origin_matches:
+            if not self.origin_matches or not self.mode_ready():
                 raise ValueError('Coordinate origin changed during planning')
             self.save(path, velocities, backward)
             self.path_pub.publish(path)
@@ -168,10 +203,11 @@ class CoverageAdapter(Node):
         return response
 
     def tick(self):
-        if self.state == 'PLANNING' and monotonic() > self.deadline:
+        if self.state == 'PLANNING' and (monotonic() > self.deadline or not self.mode_ready()):
             self.cancel(None, Trigger.Response())
-            self.state, self.reason = 'FAILED', 'Planning timeout'
-        self.status.publish(String(data=json.dumps({'state': self.state, 'reason': self.reason})))
+            self.state, self.reason = 'FAILED', 'Planning timeout or work mode/safety heartbeat changed'
+        self.status.publish(String(data=json.dumps({'state': self.state, 'reason': self.reason,
+            'output_directory': self.get_parameter('output_directory').value})))
 
 
 def main(args=None):
