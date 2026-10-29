@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Bell, User, ArrowDown } from '@element-plus/icons-vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import EmergencyControls from './EmergencyControls.vue'
 
 const route = useRoute()
+const router = useRouter()
+function navigate(target: unknown) { void router.push(String(target)) }
 const currentTime = ref(new Date())
 let timer: ReturnType<typeof setInterval> | undefined
 const pageTitle = computed(() => String(route.meta.title ?? '系统总览'))
@@ -33,13 +35,13 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
         {{ formattedTime }}
       </div>
 
-      <el-button circle text aria-label="通知">
+      <el-button circle text aria-label="运行记录" @click="router.push('/settings')">
         <el-icon :size="19">
           <Bell />
         </el-icon>
       </el-button>
 
-      <el-dropdown>
+      <el-dropdown @command="navigate">
         <div class="user-entry">
           <el-avatar :size="32" class="user-avatar">
             <el-icon>
@@ -47,7 +49,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
             </el-icon>
           </el-avatar>
 
-          <span>系统管理员</span>
+          <span>本地控制台</span>
 
           <el-icon>
             <ArrowDown />
@@ -56,8 +58,8 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item>用户信息</el-dropdown-item>
-            <el-dropdown-item>系统设置</el-dropdown-item>
+            <el-dropdown-item command="/devices">设备与安全</el-dropdown-item>
+            <el-dropdown-item command="/settings">运行记录</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>

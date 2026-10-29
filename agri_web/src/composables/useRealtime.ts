@@ -88,5 +88,5 @@ export function modeText(value: string | null | undefined): string {
 export function taskText(value?: string): string {
   return ({ IDLE: '待命', ACQUIRING: '申请控制权', RUNNING: '运行中', PAUSED: '已暂停',
     COMPLETED: '已完成', CANCELED: '已取消', FAULT: '故障停止', PLANNING: '规划中',
-    SUCCEEDED: '规划成功', FAILED: '规划失败' } as Record<string, string>)[value ?? ''] ?? (value || '等待节点')
+    SUCCEEDED: '规划成功', FAILED: '规划失败', READY: '路径已就绪', WAITING_PATH: '等待参考路径', PREPARING: '准备中', UNKNOWN: '状态未知' } as Record<string, string>)[value ?? ''] ?? (value || '等待节点')
 }

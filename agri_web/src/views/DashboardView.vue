@@ -7,7 +7,7 @@ import StatisticsCards from '../components/dashboard/StatisticsCards.vue'
 import RobotStatus from '../components/dashboard/RobotStatus.vue'
 import FieldMap from '../components/dashboard/FieldMap.vue'
 import TaskList from '../components/dashboard/TaskList.vue'
-import FieldCoordinate from '../components/dashboard/FieldCoordinate.vue'
+import TaskControls from '../components/tasks/TaskControls.vue'
 import SafetyStatus from '../components/dashboard/SafetyStatus.vue'
 import CameraMonitor from '../components/dashboard/CameraMonitor.vue'
 
@@ -62,10 +62,8 @@ async function refreshDashboard() {
 
     <SafetyStatus />
 
-    <!-- 农田经纬度输入 -->
-    <div class="coordinate-section">
-      <FieldCoordinate />
-    </div>
+    <TaskControls />
+    <div class="quick-actions"><router-link to="/tasks">配置多点导航任务 →</router-link><router-link to="/planning">编辑农田与生成覆盖路径 →</router-link><router-link to="/monitor">实时监控与人工遥控 →</router-link></div>
 
     <div class="dashboard-grid">
       <div class="dashboard-left">
@@ -90,6 +88,7 @@ async function refreshDashboard() {
   min-width: 0;
   margin-bottom: 24px;
 }
+.quick-actions { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 22px; }.quick-actions a { color: #27815a; font-size: 13px; text-decoration: none; }
 
 .dashboard-page {
   width: 100%;

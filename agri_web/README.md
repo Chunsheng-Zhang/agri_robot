@@ -2,6 +2,8 @@
 
 现有 Vue 3 总览已接入 ROS 2 实时数据。启动前端：`npm run dev -- --host 0.0.0.0 --port 5173`；还需要启动 FastAPI 后端和相应 ROS 2 节点。
 
+现已支持三模式切换、任务编辑/导入导出、真实覆盖规划、暂停恢复、限时人工遥控、设备与运行记录页面。操作流程和旧 GUI 功能取舍见 [Web 任务操作与旧 GUI 功能迁移](../docs/Web任务操作与旧GUI功能迁移.md)。首次升级先重建新增的 `agri_interfaces` 并重启旧核心/后端；不启动第二套驱动，不自动开始任务。
+
 完整启动步骤、跨电脑访问、视频配置和断连检查见 [Web 实时数据显示与启动](../docs/Web实时数据显示与启动.md)。默认通过 Vite 同源代理连接本机 8000/8080，配置示例见 `.env.example`。未接收到数据时显示未知，不提供模拟数据。
 
 This template should help get you started developing with Vue 3 in Vite.

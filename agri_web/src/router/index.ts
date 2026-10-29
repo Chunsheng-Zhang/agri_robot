@@ -18,25 +18,25 @@ const router = createRouter({
         {
           path: 'monitor',
           name: 'monitor',
-          component: () => import('../views/PlaceholderView.vue'),
+          component: () => import('../views/MonitorView.vue'),
           meta: { title: '作业监控' },
         },
         {
           path: 'tasks',
           name: 'tasks',
-          component: () => import('../views/PlaceholderView.vue'),
+          component: () => import('../views/TasksView.vue'),
           meta: { title: '任务管理' },
         },
         {
           path: 'planning',
           name: 'planning',
-          component: () => import('../views/PlaceholderView.vue'),
+          component: () => import('../views/PlanningView.vue'),
           meta: { title: '路径规划' },
         },
         {
           path: 'devices',
           name: 'devices',
-          component: () => import('../views/PlaceholderView.vue'),
+          component: () => import('../views/DevicesView.vue'),
           meta: { title: '设备管理' },
         },
         {
@@ -48,7 +48,7 @@ const router = createRouter({
         {
           path: 'settings',
           name: 'settings',
-          component: () => import('../views/PlaceholderView.vue'),
+          component: () => import('../views/SettingsView.vue'),
           meta: { title: '系统设置' },
         },
       ],

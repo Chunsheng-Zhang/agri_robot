@@ -18,12 +18,14 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('U
       if (!path.startsWith('/api/')) return route.continue()
       const json = data => route.fulfill({ json: data })
       if (disconnected) return route.fulfill({ status: 503, json: { detail: '后端测试断连' } })
+      if (path === '/api/workspace') return json({ origin: { latitude: 31, longitude: 118, epsg: 32650 },
+        origin_source: 'active_ros', defaults: { waypoint: {}, coverage: {} }, missions: [], runs: [], active_run: null, events: [] })
       if (path === '/api/robot/status') return json({ robot_id: 'test_robot', ros_connected: live, online: live,
         speed: 0.37, angular_speed: -0.12, heading: 45, battery: null, position_x: x, position_y: 3.21,
         odom_age_seconds: live ? 0.05 : null, last_odom_time: new Date().toISOString(),
         reference_path_points: 3, tracked_path_points: 2 })
       if (path === '/api/devices') return json({
-        safety: { ...fresh(), owner: 'tracking', emergency_stop: locked, obstacle_stop: false,
+        safety: { ...fresh(), mode: 'coverage', mode_revision: 1, owner: 'tracking', emergency_stop: locked, obstacle_stop: false,
           motion_inhibited: locked, localization_valid: true, joy_connected: true, lidar_connected: true, reason: 'test feedback' },
         obstacles: { ...fresh(), valid: true, global_range: 1.45, front_distance: 2.34, rear_distance: 3.45, front_valid: true, rear_valid: true },
         manual: { ...fresh(), connected: true },
@@ -34,6 +36,7 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('U
       })
       if (path.endsWith('/path/reference')) return json({ count: 3, frame_id: frame, points: [{ x: 0, y: 0 }, { x: 5, y: 0 }, { x: 5, y: 5 }] })
       if (path.endsWith('/path/tracked')) return json({ count: 2, frame_id: 'map', points: [{ x: 0, y: 0 }, { x: 1, y: 1 }] })
+      if (path === '/api/robot/waypoints') return json({ count: 0, frame_id: 'map', points: [] })
       if (path === '/api/camera/stream-info') return json({ stream_url: '/video/stream?topic=test' })
       if (path.endsWith('/emergency-stop/reset')) return route.fulfill({ status: 409, json: { detail: '测试拒绝复位：按钮仍按下' } })
       throw Error(`Unexpected API request: ${path}`)

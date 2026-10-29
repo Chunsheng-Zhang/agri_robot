@@ -18,6 +18,7 @@ export interface RobotStatusResponse {
   speed: number | null
   heading: number | null
   battery: number | null
+  battery_voltage?: number | null
   timestamp: string
   last_odom_time?: string | null
   latitude: number | null
@@ -41,6 +42,9 @@ export interface Snapshot {
 }
 
 export interface SafetySnapshot extends Snapshot {
+  mode?: 'base' | 'waypoint' | 'coverage'
+  mode_revision?: number
+  limits?: { linear: number; angular: number; path_error: number }
   owner?: string | null
   emergency_stop?: boolean | null
   estop_pressed?: boolean
@@ -53,6 +57,7 @@ export interface SafetySnapshot extends Snapshot {
 }
 
 export interface TaskSnapshot extends Snapshot {
+  elapsed_seconds?: number
   state?: string
   reason?: string
   index?: number
@@ -81,6 +86,8 @@ export interface DevicesResponse {
   tracking: TaskSnapshot
   planning: TaskSnapshot
   gnss: Snapshot & { latitude?: number; longitude?: number; fix_status?: number }
+  voltage?: Snapshot & { volts?: number }
+  scan?: Snapshot & { frame_id: string; points: PathPoint[]; range_max: number | null }
 }
 
 export function getRobotStatus(): Promise<RobotStatusResponse> {
@@ -93,6 +100,10 @@ export function getReferencePath(): Promise<ReferencePathResponse> {
 
 export function getTrackedPath(): Promise<ReferencePathResponse> {
   return apiRequest('/api/robot/path/tracked')
+}
+
+export function getWaypoints(): Promise<ReferencePathResponse> {
+  return apiRequest('/api/robot/waypoints')
 }
 
 export function getDevices(): Promise<DevicesResponse> {

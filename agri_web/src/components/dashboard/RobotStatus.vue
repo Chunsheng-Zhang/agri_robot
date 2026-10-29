@@ -13,6 +13,7 @@ const robot = computed(() => {
     mode: safetyFresh.value ? modeText(devices.value?.safety.owner) : '控制模式未知',
     speed: pose?.speed, heading: pose?.heading, angularSpeed: pose?.angular_speed,
     battery: robotFresh.value ? state.value?.battery : null,
+    voltage: robotFresh.value ? state.value?.battery_voltage : null,
     longitude: gnss?.longitude, latitude: gnss?.latitude,
     x: pose?.position_x, y: pose?.position_y,
     lastUpdated: pose?.last_odom_time ?? '',
@@ -99,10 +100,10 @@ defineExpose({ refreshData: refresh })
       <div class="status-item">
         <div class="status-label">
           <el-icon><Lightning /></el-icon>
-          电池电量
+          电池电压
         </div>
         <div class="status-value">
-          {{ robot.battery == null ? '未接入' : numberText(robot.battery, 0) + '%' }}
+          {{ robot.voltage == null ? '未接入' : numberText(robot.voltage, 2) + ' V' }}
         </div>
       </div>
     </div>

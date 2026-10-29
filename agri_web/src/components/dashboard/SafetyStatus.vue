@@ -1,8 +1,17 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { resetObstacle } from '../../api/workspace'
 import { useRealtime, modeText, numberText } from '../../composables/useRealtime'
 
-const { devices, safetyFresh, isFresh, error } = useRealtime()
+const { devices, safetyFresh, isFresh, error, refresh } = useRealtime()
+const resetting = ref(false)
+async function clearObstacle() {
+  resetting.value = true
+  try { await resetObstacle(); ElMessage.success('障碍锁定已解除，任务仍需明确继续') }
+  catch (value) { ElMessage.error(value instanceof Error ? value.message : '复位被拒绝') }
+  finally { resetting.value = false; await refresh() }
+}
 const safety = computed(() => safetyFresh.value ? devices.value?.safety : null)
 const obstacles = computed(() => isFresh(devices.value?.obstacles) && devices.value?.obstacles.valid ? devices.value.obstacles : null)
 const cards = computed(() => [
@@ -28,6 +37,7 @@ const cards = computed(() => [
       <span>前方：<strong>{{ numberText(obstacles?.front_valid ? obstacles.front_distance : null) }} m</strong></span>
       <span>后方：<strong>{{ numberText(obstacles?.rear_valid ? obstacles.rear_distance : null) }} m</strong></span>
     </div>
+    <el-button v-if="safety?.obstacle_stop" type="warning" plain :loading="resetting" :disabled="!obstacles?.recovery_ready" @click="clearObstacle">{{ obstacles?.recovery_ready ? '人工解除障碍停车' : '等待持续有效的恢复净空' }}</el-button>
     <el-alert :title="error || safety?.reason || '等待 ROS 2 安全模块'" :type="safety?.motion_inhibited === false ? 'info' : 'warning'" :closable="false" />
     <p class="hint">最近距离用于观察，停车依据由安全模块按运动方向和车体净空判定。定位有效不代表已确认 RTK 固定解。</p>
   </el-card>
