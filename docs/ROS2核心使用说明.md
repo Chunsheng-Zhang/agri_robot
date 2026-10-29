@@ -6,6 +6,8 @@
 
 手柄、4ROS 和 Astra Pro Plus 接入后的新用法见 [设备接入说明](手柄雷达相机接入说明.md)。当前 safety 默认要求有效 `/scan` 才允许运动，以下导航命令需增加 `start_lidar:=true` 或使用外部已运行的雷达；手柄/相机按需开启。
 
+2026-10-29 起，网页模式切换与任务操作已接入，见 [Web 任务操作与旧 GUI 功能迁移](Web任务操作与旧GUI功能迁移.md)。`mode` 现在选择初始模式，两类控制器及规划模块默认常驻；不按模式重复开另一份节点。新增 `agri_interfaces`，升级后需重新构建并正常重启旧核心和后端。
+
 ## 构建和环境
 
 ```bash
@@ -16,13 +18,23 @@ source scripts/setup_environment.bash
 
 脚本依赖已有 Humble、MGX23、OpenNav、Yahboom underlay。新代码额外使用 `pyproj`、PyYAML、Shapely、pytest；当前环境已具备。部署新机器时用 `rosdep` 检查声明的依赖，再构建已固定版本的上游包。本次没有改动或重建 Yahboom 原始工作区。
 
-## 只启动基础模块
+## 基础待命与统一启动
 
 ```bash
 bash scripts/start_core.bash mode:=base chassis:=none
 ```
 
-这会启动 MGX23 TCP、坐标/TF、safety 和速度适配，不打开底盘串口，不开始运动。已有外部 MGX23 节点时加 `start_mgx23:=false`，并确保它是补强后的驱动，能发布 stamped 姿态话题。
+这会启动 MGX23 TCP、坐标/TF、safety、速度适配和待命的任务/规划节点，不打开底盘串口，不开始运动。已有外部 MGX23 节点时加 `start_mgx23:=false`，并确保它是补强后的驱动，能发布 stamped 姿态话题。
+
+运行时可在 Web 顶部选择模式，也可调用以下 Trigger 服务；切换停止并取消旧自主任务，新模式保持待命：
+
+```bash
+ros2 service call /system/mode/base std_srvs/srv/Trigger '{}'
+ros2 service call /system/mode/waypoint std_srvs/srv/Trigger '{}'
+ros2 service call /system/mode/coverage std_srvs/srv/Trigger '{}'
+```
+
+独立 CSV→Path 跟踪实验用 `mode:=coverage start_planner:=false`，保留一个跟踪器、一个外部参考路径发布者。跟踪器兼容原 CSV 的 volatile 周期发布和 OpenNav 的持久化发布，拒绝多个参考路径发布者。此选项关闭覆盖规划接口，正常 Web 作业保持 `start_planner:=true` 默认值。
 
 参数源文件为 `agri_robot_ws/src/agri_bringup/config/system.yaml`。symlink-install 后默认 launch 可读该配置；也可通过 `params_file:=<绝对路径>` 指定配置副本。
 
@@ -119,6 +131,8 @@ ros2 topic echo /tracking/status
 ```
 
 暂停、继续和取消对应 `/tracking/pause`、`/tracking/resume`、`/tracking/cancel`，类型均为 Trigger。规划取消是 `/planning/cancel`。处于运行或暂停状态时不接受中途替换路径，需要先取消再重新开始。任务轨迹在 map 下发布，配置目录后先保存同名 JSON 元数据，再持续写 CSV，每 20 条刷新，关闭任务时完成写盘。
+
+多点导航配置 `trajectory_directory` 后也保存 `waypoint_*.csv` 与同名 JSON，字段为 `stamp,x,y,yaw,target_index,distance,heading_error`，目标索引从 0 开始；其目标与轨迹分别发布到 `/waypoint/targets` 和 `/waypoint/trajectory`，不会向覆盖跟踪的 `/reference_path` 写入目标点。
 
 ## 急停与恢复
 

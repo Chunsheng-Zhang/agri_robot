@@ -4,6 +4,12 @@
 
 后续已接入 Jetson 手柄、4ROS 与 Astra Pro Plus，补充了人工控制、雷达锁定停车和真实安全状态 API。以下为首版核心设计；当前设备启动、安全策略和新增接口以 [设备接入说明](手柄雷达相机接入说明.md) 为准，尤其运动现默认要求有效雷达。
 
+2026-10-29 新增 Web 任务与模式切换，最新操作见 [迁移与操作说明](Web任务操作与旧GUI功能迁移.md)。六个功能模块保留，新增 CMake 接口包 `agri_interfaces`，提供带模式版本/任务代号的 `AcquireControl.srv`。统一启动默认常驻两类控制器与覆盖规划，`mode` 是初始选择；safety 提供三个模式 Trigger 服务并在切换时撤权停车，拒绝旧模式请求和旧任务释放。全局原点、定位安装参数和硬件安全参数保持启动配置只读。
+
+任务配置和运行记录由 FastAPI 保存为文件，模式、开始/暂停/恢复/取消与参数应用均通过 ROS 服务，不从 Web 启动原厂进程或直接控制串口。任务参数仅在待命时通过标准原子参数服务应用；最小转弯半径变化通过原有 lifecycle manager 重配规划服务器，使参数真实生效。覆盖路径成功发布与开始跟踪是独立操作。
+
+新增 `/waypoint/targets`、`/waypoint/trajectory` 为 map 下的标准 Path，多点和覆盖跟踪均保存带同名投影元数据的 CSV。`/control/web/cmd_vel` 的遥控请求有会话、递增序号和短期限；ROS safety 仍是唯一 `/cmd_vel` 发布者。旧 GUI 的动态地块原点、近似 ENU、串口兜底、通杀重置和虚拟 GPS 不进入实车核心。
+
 ## 1. 已核实的现状
 
 | 代码位置 | 实际行为 | 集成处理 |
@@ -161,7 +167,9 @@ Action goal 设置 Cartesian、frame `map`、CONSTANT 地头、SET_ANGLE 条带�
 | `/cmd_vel` | `geometry_msgs/Twist` | safety → chassis_adapter、原后端 | 20 Hz；车体速度，仅一个发布者 |
 | `/base/driver_cmd_vel` | `geometry_msgs/Twist` | chassis_adapter → 原始 X3/未来履带驱动 | 20 Hz；仅一个发布者 |
 | `/reference_path` | `nav_msgs/Path` | coverage_adapter → path_tracker、原后端 | 规划完成一次，可靠持久；map |
-| `/tracked_path` | `nav_msgs/Path` | path_tracker → 记录/原后端 | 有新位姿时，最多 20 Hz；map，最近 10000 点 |
+| `/tracked_path` | `nav_msgs/Path` | path_tracker → 记录/后端 | 最多约 2 Hz，结束补发；map，最近 10000 点，CSV 仍按控制采样记录 |
+| `/waypoint/targets` | `nav_msgs/Path` | waypoint → 后端/可视化 | 准备任务时可靠持久发布；map |
+| `/waypoint/trajectory` | `nav_msgs/Path` | waypoint → 后端 | 最多约 2 Hz，结束补发；map，最近 10000 点 |
 | `/tracking/error` | `geometry_msgs/Vector3Stamped` | path_tracker → safety | 20 Hz；map，x=路径段距离、y=航向误差、z=弧长进度 |
 | `/waypoint/status` | `std_msgs/String` JSON | waypoint → 管理层 | 20 Hz，含状态、目标序号、距离、航向误差 |
 | `/tracking/status` | `std_msgs/String` JSON | path_tracker → 管理层 | 20 Hz，含状态、弧长、总长度 |
@@ -178,9 +186,10 @@ Action goal 设置 Cartesian、frame `map`、CONSTANT 地头、SET_ANGLE 条带�
 | --- | --- | --- |
 | `/waypoint/start,pause,resume,cancel` | `std_srvs/Trigger` | 重新读取 YAML 开始；暂停、继续、取消；完整状态在 Topic |
 | `/tracking/start,pause,resume,cancel` | `std_srvs/Trigger` | 使用最近有效参考路径开始；不自动抢占或替换运行中路径 |
-| `/safety/waypoint/enable` | `std_srvs/SetBool` | waypoint 申请/释放控制权；其他任务不能释放它的权限 |
-| `/safety/tracking/enable` | `std_srvs/SetBool` | tracking 申请/释放控制权 |
-| `/safety/emergency_stop` | `std_srvs/SetBool` | true 锁定急停；false 仅在定位/图状态健康时解除，并保持无任务 |
+| `/system/mode/base,waypoint,coverage` | `std_srvs/Trigger` | 切换选择模式，撤销旧控制权并停车，新模式不自动运行 |
+| `/safety/acquire_control` | `agri_interfaces/srv/AcquireControl` | 自主/Web 控制权使用模式版本和任务代号校验，拒绝延迟旧请求/释放 |
+| `/safety/waypoint/enable`、`/safety/tracking/enable` | `std_srvs/SetBool` | 保留兼容接口；新任务节点使用带版本的统一控制权服务 |
+| `/safety/emergency_stop` | `std_srvs/SetBool` | true 锁定急停；false 要求按钮松开、唯一图输出及所需手柄在线回中，保持无任务 |
 | `/planning/plan` | `std_srvs/Trigger` | 异步发起规划，返回已受理；查看 planning/status 确认成功 |
 | `/planning/cancel` | `std_srvs/Trigger` | 请求取消上游 Action，并使晚到结果失效 |
 | `/compute_coverage_path` | `opennav_coverage_msgs/action/ComputeCoveragePath` | adapter 为 client，现有 coverage_server 为 server；返回 nav_path、分段信息、错误码、耗时 |
@@ -188,17 +197,17 @@ Action goal 设置 Cartesian、frame `map`、CONSTANT 地头、SET_ANGLE 条带�
 
 当前任务使用 Service + 状态 Topic，不依赖 Nav2 FollowPath、WaypointFollower、控制器服务器或 BT。规划使用已经存在的 Action，不额外发明一套相同算法接口。后续 Web 若需要长任务 goal UUID、反馈、取消和结果持久化，可增加薄的任务 Action 外观，复用现有任务状态机；这部分尚未实现。
 
-参数集中在 `agri_bringup/config/system.yaml`。waypoint、边界文件和输出目录通过 launch 参数传入。当前按启动配置或开始服务重新读取文件的方式运行，暂不支持运行中热更新控制参数；修改参数后重启相应节点。FastAPI 后续应通过任务服务配置/调度，不直接向 `/cmd_vel` 发布。
+参数集中在 `agri_bringup/config/system.yaml`。waypoint、边界文件和输出目录可通过 launch 参数传入，也可由 Web 保存独立任务并在待命时应用。硬件安全、定位校准和全局原点只读，修改后重启核心；任务参数在待命时经原子参数服务验证，运行/暂停时拒绝修改，不能靠热改参数改变正在行驶的控制器。FastAPI 通过 ROS 服务调度，遥控只发布 `/control/web/cmd_vel`，不直接发布 `/cmd_vel`。
 
 ## 9. 启动、部署与后续范围
 
-具体操作见 `ROS2核心使用说明.md`。新 launch 支持 base/waypoint/coverage 模式、是否启动 MGX23，以及 none/yahboom_x3/external 底盘；默认 none，且启动时软件急停锁定。任务模块各自也可通过 `ros2 run` 单独启动，但须加载同一参数文件并使用已运行的基础模块。
+具体操作见 `ROS2核心使用说明.md`。新 launch 支持 base/waypoint/coverage 初始模式、是否启动 MGX23，以及 none/yahboom_x3/external 底盘；默认 none，且启动时软件急停锁定。两类控制器和规划默认常驻，外部路径实验可用 start_planner:=false 关闭规划模块。模块各自也可单独调试，但不与统一核心中的同名实例重复启动，且须加载同一参数文件。
 
 Jetson 使用同一源码，在 Ubuntu 22.04 / Humble / Python 3.10 的 aarch64 环境本机构建上游 C++ 库，不能复制 x86 install 中的二进制。先检查原厂 `Rosmaster_Lib`、pyserial、串口权限和设备路径，再以原始 X3 可执行文件验证硬件。systemd 模板只提供 base/none，不会安装、启用服务或自动开始任务。ROS_DOMAIN_ID、网卡和 ROS_LOCALHOST_ONLY 按真实网络环境设置。
 
 Git 保留现有目录，不做工作区整体迁移；新源码、配置、测试和文档入库，build/install/log、二进制日志和实测大文件不入库。建议后续用 `.repos` 固定上游仓库的实际分支/commit，但不在缺少版本锁定信息时生成猜测版本。
 
-现有 FastAPI `/odom`、`/cmd_vel`、`/reference_path`、`/tracked_path` 接口可继续读状态。其急停缓存只是最近发送的命令，后续应改为订阅 `/safety/emergency_stop`；参考路径若要立即接收持久化历史，需要将后端订阅 QoS 改为 transient-local。前后端任务 UI、本地动态障碍感知、真实履带驱动、反向跟踪、地头作业覆盖及多机器人协调属于后续工作。
+FastAPI 已桥接位置、指令、参考路径和最近实际轨迹，急停显示采用实时安全反馈，参考订阅兼容持久与周期发布。任务 UI、ROS 模式切换、限时遥控和雷达安全停车已实现；真实履带驱动、反向跟踪、自动绕障、地头作业覆盖及多机器人协调仍属后续工作。
 
 当前软件 watchdog 在 safety 或控制器失联时由底盘适配持续输出零速度；如果底盘适配进程本身退出，原始 X3 驱动代码未见速度接收超时逻辑。底盘固件是否有独立 watchdog 尚未验证，不能将 ROS 软件急停视为硬件急停或故障安全保证。该限制与直接复用原驱动有关，后续真实履带驱动应明确规定接收超时和硬件急停接口。
 

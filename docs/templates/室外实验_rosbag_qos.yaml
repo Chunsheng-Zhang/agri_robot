@@ -30,6 +30,11 @@
   durability: transient_local
   history: keep_last
   depth: 1
+/waypoint/targets:
+  reliability: reliable
+  durability: transient_local
+  history: keep_last
+  depth: 1
 /safety/events:
   reliability: reliable
   durability: transient_local
