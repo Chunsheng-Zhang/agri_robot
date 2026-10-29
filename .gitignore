@@ -223,8 +223,9 @@ yahboomcar_ros2_ws/software/
 
 mgx23_ws/data/**
 
-# Runtime artifacts from the integrated ROS 2 core (keep field/task inputs tracked).
+# Runtime output and mutable Web mission store; versioned fixtures/config inputs remain tracked.
 /data/logs/
 /data/experiments/
+/data/web/
 /data/paths/coverage_*.json
 

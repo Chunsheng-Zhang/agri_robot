@@ -4,6 +4,7 @@ import copy
 import json
 import math
 import os
+from collections import deque
 from threading import Event, Lock
 from time import monotonic
 from urllib.parse import urlencode
@@ -12,6 +13,15 @@ from urllib.parse import urlencode
 class DeviceCache:
     def __init__(self):
         self.lock, self.values = Lock(), {}
+        self.events = deque(maxlen=100)
+
+    def add_event(self, value):
+        with self.lock:
+            self.events.append(copy.deepcopy(value))
+
+    def recent_events(self):
+        with self.lock:
+            return list(reversed(copy.deepcopy(self.events)))
 
     def update(self, name, value):
         with self.lock:
@@ -33,10 +43,12 @@ class DeviceCache:
         with self.lock:
             items = copy.deepcopy(self.values)
         result = {}
-        for name in ('safety', 'obstacles', 'manual', 'camera', 'waypoint', 'tracking', 'planning', 'gnss'):
+        for name in ('safety', 'obstacles', 'manual', 'camera', 'waypoint', 'tracking', 'planning', 'gnss', 'origin', 'voltage', 'scan'):
             value, received = items.get(name, ({}, -math.inf))
             age = now - received
-            fresh = age < 1.0 if name != 'gnss' else age < 0.5
+            fresh = age < (0.5 if name == 'gnss' else 3.0 if name == 'voltage' else 1.0)
+            if name == 'origin':
+                fresh = bool(value)  # Fixed configuration, deliberately latched; not a heartbeat.
             result[name] = {**value, 'fresh': fresh, 'age_seconds': round(age, 3) if math.isfinite(age) else None}
             if not fresh:
                 if name in ('camera', 'manual'):
@@ -55,8 +67,8 @@ device_cache = DeviceCache()
 
 def install_ros_devices(node):
     from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy, qos_profile_sensor_data
-    from sensor_msgs.msg import NavSatFix
-    from std_msgs.msg import String
+    from sensor_msgs.msg import NavSatFix, LaserScan
+    from std_msgs.msg import String, Float32
     from std_srvs.srv import SetBool, Trigger
     latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                          reliability=ReliabilityPolicy.RELIABLE)
@@ -68,6 +80,32 @@ def install_ros_devices(node):
     ):
         node.create_subscription(String, topic,
             lambda msg, key=name: device_cache.update_json(key, msg.data), latched if durable else 1)
+    node.create_subscription(String, '/localization/origin',
+        lambda msg: device_cache.update('origin', {'projection': json.loads(msg.data)}), latched)
+    node.create_subscription(Float32, '/voltage', lambda msg: device_cache.update(
+        'voltage', {'volts': float(msg.data)}) if math.isfinite(msg.data) and msg.data > 0 else None, 1)
+
+    def scan(msg):
+        if not math.isfinite(msg.angle_increment) or not math.isfinite(msg.angle_min):
+            return
+        stride = max(1, math.ceil(len(msg.ranges) / 720))
+        points = []
+        for index in range(0, len(msg.ranges), stride):
+            value = msg.ranges[index]
+            if math.isfinite(value) and msg.range_min <= value <= msg.range_max:
+                angle = msg.angle_min + index * msg.angle_increment
+                points.append({'x': value * math.cos(angle), 'y': value * math.sin(angle)})
+        device_cache.update('scan', {'frame_id': msg.header.frame_id, 'points': points,
+                                    'range_max': float(msg.range_max) if math.isfinite(msg.range_max) else None})
+    node.create_subscription(LaserScan, '/scan', scan, qos_profile_sensor_data)
+    def event(msg):
+        try:
+            value = json.loads(msg.data)
+            if isinstance(value, dict):
+                device_cache.add_event({**value, 'channel': 'ros'})
+        except (ValueError, TypeError):
+            pass
+    node.create_subscription(String, '/safety/events', event, latched)
 
     def gnss(msg):
         if math.isfinite(msg.latitude) and math.isfinite(msg.longitude):
@@ -137,6 +175,9 @@ def install_routes(app, require_bridge):
     def task(source: str, action: str):
         if source not in ('waypoint', 'tracking') or action not in ('start', 'pause', 'resume', 'cancel'):
             raise HTTPException(404, 'Unknown task operation')
-        return service_call(require_bridge().node, f'/{source}/{action}')
+        result = service_call(require_bridge().node, f'/{source}/{action}')
+        if hasattr(app.state, 'workspace'):
+            app.state.workspace.event(f'TASK_{action.upper()}', source=source)
+        return result
 
     app.include_router(router)

@@ -1,0 +1,103 @@
+"""Real ROS safety/mode services and planner behind FastAPI, synthetic hardware only."""
+import io
+import os
+import time
+import zipfile
+
+import pytest
+
+pytestmark = pytest.mark.skipif(os.getenv('AGRI_WEB_ROS_TESTS') != '1', reason='Opt-in isolated Web/ROS integration')
+
+
+def test_web_modes_missions_planning_recordings_and_deadman():
+    from fastapi.testclient import TestClient
+    from pyproj.enums import TransformDirection
+    from agri_interfaces.srv import AcquireControl
+    from agri_backend.ros_workspace import wait_result
+    from web_test_runtime import SyntheticSystem
+    system = SyntheticSystem()
+    client = TestClient(system.app)  # Explicit fixture owns the ROS executor, no app lifespan.
+
+    def until(predicate, timeout=15):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            time.sleep(0.03)
+        raise AssertionError(f'timeout: {client.get("/api/devices").json()}')
+
+    def post(path, body=None):
+        result = client.post(path, json=body) if body is not None else client.post(path)
+        assert result.status_code == 200, result.text
+        return result.json()
+
+    try:
+        until(lambda: client.get('/api/devices').json()['safety']['fresh'])
+        assert client.get('/api/devices').json()['safety']['mode'] == 'base'
+        frame = system.localization.frame
+        lon, lat = frame.transformer.transform(frame.e0 + 1, frame.n0, direction=TransformDirection.INVERSE)
+        waypoint = post('/api/missions', {'name': '实际接口多点测试', 'mode': 'waypoint',
+            'waypoints': [{'latitude': lat, 'longitude': lon, 'dwell_time': 0}]})
+        assert client.post(f'/api/missions/{waypoint["id"]}/start').status_code == 409
+        post('/api/system/mode', {'mode': 'waypoint'})
+        until(lambda: system.waypoint.mode_matches)
+        assert client.post(f'/api/missions/{waypoint["id"]}/start').status_code == 409  # Estop stays locked.
+        post('/api/robot/emergency-stop/reset')
+        until(lambda: not client.get('/api/devices').json()['safety']['emergency_stop'])
+        post(f'/api/missions/{waypoint["id"]}/start')
+        until(lambda: system.waypoint.state == 'RUNNING' and system.state['v'] > 0)
+        post('/api/tasks/waypoint/pause')
+        until(lambda: system.state['v'] == 0)
+        post('/api/tasks/waypoint/resume')
+        until(lambda: system.state['v'] > 0)
+        old_revision = system.safety.mode_revision
+        post('/api/system/mode', {'mode': 'base'})
+        until(lambda: system.waypoint.state == 'CANCELED' and system.state['v'] == 0)
+        # A queued request from the previous mode cannot acquire control.
+        response = wait_result(system.backend.workspace_ros.clients['/safety/acquire_control'].call_async(
+            AcquireControl.Request(source='waypoint', enable=True, mode_revision=old_revision, task_generation=1)))
+        assert not response.success
+        post('/api/system/mode', {'mode': 'waypoint'})
+        until(lambda: system.waypoint.mode_matches)
+        assert not system.safety.gate.owner and system.state['v'] == 0
+        archive_run = client.get('/api/workspace').json()['runs'][0]
+        archive = client.get(f'/api/runs/{archive_run["id"]}/download')
+        assert archive.status_code == 200, archive.text
+        with zipfile.ZipFile(io.BytesIO(archive.content)) as data:
+            assert any(name.startswith('tracks/waypoint_') and name.endswith('.csv') for name in data.namelist())
+            assert any(name.startswith('tracks/waypoint_') and name.endswith('.json') for name in data.namelist())
+
+        post('/api/system/mode', {'mode': 'coverage'})
+        until(system.planner.mode_ready)
+        import yaml
+        from pathlib import Path
+        boundary = yaml.safe_load((Path(__file__).resolve().parents[1] /
+            'agri_robot_ws/src/agri_bringup/config/field.yaml').read_text())
+        coverage = post('/api/missions', {'name': '实际 OpenNav 测试', 'mode': 'coverage', 'boundary': boundary,
+            'parameters': {'min_turning_radius': 0.65}})
+        until(lambda: system.planner.client.server_is_ready() and system.backend.workspace_ros.clients[
+            '/coverage_lifecycle_manager/manage_nodes'].service_is_ready())
+        post(f'/api/missions/{coverage["id"]}/plan')
+        until(lambda: (client.get('/api/workspace').json().get('active_run') or {}).get('state') == 'READY', 30)
+        assert system.backend.workspace_ros.get_parameters('coverage_server', ['min_turning_radius'])['min_turning_radius'] == 0.65
+        assert not system.safety.gate.owner  # Planning never starts motion.
+        post('/api/test/align-path-start')
+        until(lambda: abs(system.localization.odom_pub.get_subscription_count()) > 0)
+        time.sleep(0.15)
+        post(f'/api/missions/{coverage["id"]}/start')
+        until(lambda: system.tracker.state == 'RUNNING' and system.state['v'] > 0)
+        post('/api/tasks/tracking/cancel')
+        until(lambda: system.tracker.state == 'CANCELED' and not system.safety.gate.owner)
+        post('/api/system/mode', {'mode': 'base'})
+        until(lambda: client.get('/api/devices').json()['safety']['mode'] == 'base')
+        session = post('/api/control/arm')
+        until(lambda: client.get('/api/devices').json()['safety']['owner'] == 'web')
+        post('/api/control/command', {'token': session['token'], 'seq': 1, 'linear': 0.1,
+            'angular': 0.0, 'expires_at': time.time() + 0.2})
+        until(lambda: system.state['v'] > 0, 1)
+        until(lambda: system.state['v'] == 0 and not system.safety.gate.owner, 2)
+        assert client.post('/api/control/command', json={'token': session['token'], 'seq': 2, 'linear': 0.1,
+            'angular': 0.0, 'expires_at': time.time() + 0.2}).status_code == 409
+    finally:
+        client.close()
+        system.close()

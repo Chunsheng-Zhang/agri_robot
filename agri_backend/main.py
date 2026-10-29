@@ -27,12 +27,15 @@ from math import atan2, degrees, hypot, isfinite
 from threading import Lock, Thread
 from time import monotonic
 import json
+import hashlib
 from pathlib import Path as FilePath
 
 try:
     from .devices import device_cache, install_ros_devices, install_routes, service_call
 except ImportError:
-    from devices import device_cache, install_ros_devices, install_routes, service_call
+    import sys
+    sys.path.insert(0, str(FilePath(__file__).resolve().parent.parent))
+    from agri_backend.devices import device_cache, install_ros_devices, install_routes, service_call
 
 
 # ============================================================
@@ -41,6 +44,8 @@ except ImportError:
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 
@@ -122,8 +127,12 @@ class RobotState:
             "tracked_path_points": 0,
             "reference_path": [],
             "reference_frame": "",
+            "reference_sequence": 0,
+            "reference_fingerprint": "",
             "tracked_path": [],
             "tracked_frame": "",
+            "waypoint_path": [],
+            "tracked_source": "tracking",
 
             # 最近一次收到里程计的时间
             "last_odom_time": None,
@@ -265,8 +274,17 @@ if ROS_AVAILABLE:
                 self.tracked_path_callback,
                 10,
             )
+            self.create_subscription(Path, '/waypoint/trajectory',
+                lambda msg: self.tracked_path_callback(msg, 'waypoint'), 1)
+            self.create_subscription(Path, '/waypoint/targets', self.waypoint_targets_callback,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
 
             install_ros_devices(self)
+            try:
+                from .ros_workspace import RosWorkspace
+            except ImportError:
+                from agri_backend.ros_workspace import RosWorkspace
+            self.workspace_ros = RosWorkspace(self)
 
             self.get_logger().info(
                 "农业机器人 ROS 2 桥接节点已启动"
@@ -394,13 +412,16 @@ if ROS_AVAILABLE:
                 reference_path_points=len(points),
                 reference_path=points if all(isfinite(p['x']) and isfinite(p['y']) for p in points) else [],
                 reference_frame=msg.header.frame_id,
+                reference_sequence=robot_state.snapshot()['reference_sequence'] + 1,
+                reference_fingerprint=hashlib.sha256(json.dumps(
+                    [msg.header.frame_id, points], allow_nan=True, sort_keys=True).encode()).hexdigest(),
             )
 
         # ====================================================
         # 7.9 实际跟踪路径回调
         # ====================================================
 
-        def tracked_path_callback(self, msg: Path):
+        def tracked_path_callback(self, msg: Path, source='tracking'):
             """记录实际跟踪路径，供实时页面与参考路径叠加。"""
 
             points = [{'x': p.pose.position.x, 'y': p.pose.position.y} for p in msg.poses[-10000:]]
@@ -409,7 +430,13 @@ if ROS_AVAILABLE:
                 tracked_path_points=len(msg.poses),
                 tracked_path=points if all(isfinite(p['x']) and isfinite(p['y']) for p in points) else [],
                 tracked_frame=msg.header.frame_id,
+                tracked_source=source,
             )
+
+        def waypoint_targets_callback(self, msg: Path):
+            points = [{'x': p.pose.position.x, 'y': p.pose.position.y} for p in msg.poses]
+            robot_state.update(waypoint_path=points if msg.header.frame_id == 'map' and all(
+                isfinite(p['x']) and isfinite(p['y']) for p in points) else [])
 
 
 # ============================================================
@@ -560,6 +587,13 @@ app = FastAPI(
     version="0.3.0",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(RequestValidationError)
+async def invalid_request(request, exc):
+    # Do not echo NaN/Inf inputs into a JSON error response or hide useful field errors.
+    messages = ['.'.join(map(str, item['loc'][1:])) + ': ' + item['msg'] for item in exc.errors()[:5]]
+    return JSONResponse(status_code=422, content={'detail': '参数校验失败：' + '；'.join(messages)})
 
 
 # ============================================================
@@ -737,6 +771,7 @@ def get_robot_status():
 
         # 尚未接入电池数据，不伪造电量
         "battery": None,
+        "battery_voltage": devices['voltage'].get('volts') if devices['voltage']['fresh'] else None,
 
         "timestamp": datetime.now().astimezone().isoformat(
             timespec="seconds"
@@ -801,6 +836,12 @@ def get_tracked_path():
     data = robot_state.snapshot()
     return {'count': len(data['tracked_path']), 'points': data['tracked_path'],
             'frame_id': data['tracked_frame']}
+
+
+@app.get('/api/robot/waypoints')
+def get_waypoints():
+    points = robot_state.snapshot()['waypoint_path']
+    return {'count': len(points), 'frame_id': 'map', 'points': points}
 
 
 # ============================================================
@@ -962,3 +1003,12 @@ def receive_coordinate(data: CoordinateRequest):
 
 
 install_routes(app, require_ros_bridge)
+
+try:
+    from .workspace import install_routes as install_workspace_routes
+except ImportError:
+    # Supports the documented `cd agri_backend; uvicorn main:app` invocation.
+    import sys
+    sys.path.insert(0, str(FilePath(__file__).resolve().parent.parent))
+    from agri_backend.workspace import install_routes as install_workspace_routes
+install_workspace_routes(app, require_ros_bridge, robot_state.snapshot)
