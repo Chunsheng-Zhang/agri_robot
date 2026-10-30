@@ -11,6 +11,7 @@ const direction = ref({ v: 0, w: 0 }), limits = ref({ linear: 0.3, angular: 0.6 
 const eligible = computed(() => safetyFresh.value && devices.value?.safety.mode === 'base'
   && devices.value.safety.motion_inhibited === false)
 let timer: ReturnType<typeof setInterval> | undefined, seq = 0, offset = 0, pending = false
+let armGeneration = 0
 const keys = new Set<string>()
 async function heartbeat(force = false) {
   const session = token.value
@@ -27,21 +28,36 @@ async function heartbeat(force = false) {
   } finally { pending = false }
 }
 async function arm() {
+  const generation = ++armGeneration
+  let candidate: string | null = null
   busy.value = true
   try {
     const started = Date.now() / 1000, response = await armManual(), ended = Date.now() / 1000
-    if (ended - started > 0.3) { void stopManual(response.token); throw new Error('遥控响应延迟过高，请检查局域网或使用手柄') }
-    token.value = response.token; seq = 0; offset = response.server_time - (started + ended) / 2
+    candidate = response.token
+    if (generation !== armGeneration || !eligible.value || document.visibilityState !== 'visible') return
+    if (ended - started > 0.3) throw new Error('遥控响应延迟过高，请检查局域网或使用手柄')
+    const clockOffset = response.server_time - (started + ended) / 2
+    // Verify the expiring command channel with zero velocity before enabling
+    // direction controls. Never retry arm or a movement command automatically.
+    await manualCommand({ token: candidate, seq: 1, linear: 0, angular: 0,
+      expires_at: Date.now() / 1000 + clockOffset + 0.2 })
+    if (generation !== armGeneration || !eligible.value || document.visibilityState !== 'visible') return
+    token.value = candidate; candidate = null; seq = 1; offset = clockOffset
     // The Web API caps commands at 1 m/s and 2 rad/s, independently of the
     // physical joystick's factory limits. Do not offer values it will reject.
     limits.value = { linear: Math.min(response.limits.linear, 1), angular: Math.min(response.limits.angular, 2) }
     linear.value = Math.min(linear.value, limits.value.linear); angular.value = Math.min(angular.value, limits.value.angular)
     timer = setInterval(() => void heartbeat(), 80)
-  } catch (value) { ElMessage.error(value instanceof Error ? value.message : '无法取得遥控权限') }
-  finally { busy.value = false }
+  } catch (value) {
+    if (generation === armGeneration) ElMessage.error(value instanceof Error ? value.message : '无法取得遥控权限')
+  } finally {
+    if (candidate) void stopManual(candidate).catch(() => {})
+    busy.value = false
+  }
 }
 function neutral() { direction.value = { v: 0, w: 0 }; void heartbeat(true) }
 function stop(beacon = false) {
+  armGeneration += 1  // Late arm/probe responses must never re-enable controls.
   const session = token.value
   token.value = null; clearInterval(timer); keys.clear(); direction.value = { v: 0, w: 0 }
   if (session) {

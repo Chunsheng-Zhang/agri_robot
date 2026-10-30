@@ -51,6 +51,11 @@ export async function manualCommand(data: { token: string; seq: number; linear: 
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data), signal: controller.signal,
     })
     if (!response.ok) throw new Error((await response.json()).detail || '遥控指令被拒绝')
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error('遥控通信超过 180 毫秒，请检查网络或使用现场手柄')
+    }
+    throw error
   } finally { clearTimeout(timer) }
 }
 export function downloadJson(name: string, data: unknown) {
