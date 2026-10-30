@@ -203,9 +203,10 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
           <el-button :loading="previewBusy" @click="buildPreview()">检查边界 / 航点</el-button>
           <el-button type="primary" :loading="busy" @click="save">保存任务</el-button>
           <el-button v-if="kind === 'coverage'" type="success" plain :disabled="dirty || busy || !controlsIdle || devices?.safety.mode !== 'coverage'" @click="operate('plan')">生成覆盖路径</el-button>
-          <el-button type="success" :disabled="dirty || busy || !controlsIdle || devices?.safety.mode !== kind || devices?.safety.motion_inhibited !== false || devices?.safety.localization_valid !== true || (kind === 'coverage' && !planReady)" @click="operate('start')">{{ kind === 'coverage' ? '开始路径跟踪' : '开始多点导航' }}</el-button>
+          <el-button type="success" :disabled="dirty || busy || !controlsIdle || devices?.safety.mode !== kind || devices?.safety.motion_inhibited !== false || devices?.safety.localization_valid !== true || (kind === 'coverage' && !planReady)" @click="operate('start')">{{ kind === 'coverage' ? '前往起点并开始覆盖' : '开始多点导航' }}</el-button>
         </div>
-        <p class="hint">先保存，再选择对应模式。全覆盖路径由真实 OpenNav 生成，规划成功不会自动行驶。需要靠近参考路径起点后明确开始跟踪。</p>
+        <p v-if="kind === 'coverage'" class="hint">先保存、选择全覆盖模式并生成路径。点击开始后，车辆较远时会先单点导航到覆盖起点，再自动跟踪覆盖路径；已在起点附近则直接跟踪。接近起点采用直达导航，请先确认接近通道可通行。</p>
+        <p v-else class="hint">先保存，再选择多点导航模式，定位与安全状态有效后明确开始任务。</p>
       </el-form>
     </el-card>
     <div v-if="preview" class="preview-summary">{{ kind === 'coverage' ? `地块面积 ${(preview.area || 0).toFixed(2)} m² · 周界 ${preview.length.toFixed(2)} m` : `目标点 ${preview.points.length} 个 · 相邻点连线长 ${preview.length.toFixed(2)} m` }} · map 米制坐标</div>

@@ -12,7 +12,8 @@ pytestmark = pytest.mark.skipif(os.environ.get('AGRI_ROS_TESTS') != '1',
                                 reason='Set AGRI_ROS_TESTS=1 in an isolated ROS domain')
 
 
-def test_services_safety_and_closed_loop(tmp_path):
+@pytest.mark.parametrize('approach_offset', [0.0, 3.0])
+def test_services_safety_and_closed_loop(tmp_path, approach_offset):
     import csv
     import rclpy
     from rclpy.executors import SingleThreadedExecutor
@@ -139,7 +140,8 @@ def test_services_safety_and_closed_loop(tmp_path):
         until(lambda: waypoint.state == 'COMPLETED', 15)
         until(lambda: not safety.gate.owner and state['v'] == 0)
 
-        # Track a straight path beginning at current pose, with a second task contending.
+        # Cover both a nearby path and one whose start is farther than the safety
+        # path-error limit. Approach must report corridor error, not goal range.
         assert service(Trigger, '/system/mode/coverage').success
         until(tracker.healthy)
         state['yaw'] = 0.0
@@ -148,7 +150,7 @@ def test_services_safety_and_closed_loop(tmp_path):
         for dx in (0, 0.3, 0.6):
             p = PoseStamped()
             p.header = path.header
-            p.pose.position.x, p.pose.position.y = state['x'] + dx, state['y']
+            p.pose.position.x, p.pose.position.y = state['x'] + approach_offset + dx, state['y']
             p.pose.orientation.w = 1.0
             path.poses.append(p)
         path_pub.publish(path)
@@ -157,24 +159,61 @@ def test_services_safety_and_closed_loop(tmp_path):
         until(lambda: tracker.state == 'RUNNING')
         assert not service(Trigger, '/waypoint/start').success  # Different work mode cannot acquire control.
         assert safety.gate.owner == 'tracking'
-        until(lambda: tracker.state == 'COMPLETED', 10)
+        if approach_offset:
+            assert tracker.controller.phase == 'APPROACHING'
+            assert service(Trigger, '/tracking/pause').success
+            until(lambda: state['v'] == state['w'] == 0)
+            spin_for(.35)  # Paused approach still supplies fresh deviation feedback.
+            assert safety.gate.owner == 'tracking' and tracker.controller.progress == 0
+            assert service(Trigger, '/tracking/resume').success
+            until(lambda: state['v'] > 0)
+            # Localization recovery cannot resume a failed approach by itself.
+            state['sensors'] = False
+            until(lambda: tracker.state == 'FAULT' and not safety.gate.owner and state['v'] == 0)
+            state['sensors'] = True
+            until(tracker.healthy)
+            spin_for(.3)
+            assert not safety.gate.owner and tracker.state == 'FAULT'
+            assert service(Trigger, '/tracking/start').success
+            until(lambda: tracker.state == 'RUNNING')
+            assert service(Trigger, '/tracking/cancel').success
+            until(lambda: not safety.gate.owner and state['v'] == 0)
+            spin_for(.3)
+            assert tracker.state == 'CANCELED'
+            assert service(Trigger, '/tracking/start').success
+            until(lambda: tracker.state == 'RUNNING')
+        until(lambda: tracker.state == 'COMPLETED', 25 if approach_offset else 10)
         until(lambda: state['v'] == 0 and not safety.gate.owner)
         assert len(tracker.trajectory.poses) > 3
         files = list(tmp_path.glob('track_*.csv'))
-        assert len(files) == 1
-        metadata = json.loads(files[0].with_suffix('.json').read_text())
+        files.sort()
+        assert len(files) == (3 if approach_offset else 1)
+        metadata = json.loads(files[-1].with_suffix('.json').read_text())
         assert metadata['projection'] == frame.identity
         assert metadata['frame_id'] == metadata['reference_path']['frame_id'] == 'map'
         assert metadata['position_reference'] == 'base_link'
         expected = [(p.pose.position.x, p.pose.position.y) for p in path.poses]
         assert [(p['x'], p['y']) for p in metadata['reference_path']['points']] == expected
-        with files[0].open() as stream:
+        with files[-1].open() as stream:
             rows = list(csv.DictReader(stream))
-        assert len(rows) == len(tracker.trajectory.poses)
-        for row, recorded in zip(rows, tracker.trajectory.poses):
-            assert float(row['x']) == recorded.pose.position.x
-            assert float(row['y']) == recorded.pose.position.y
-            assert recorded.header.frame_id == 'map'
+        if approach_offset:
+            approach_file = tmp_path / metadata['approach_csv']
+            approach_meta = json.loads(approach_file.with_suffix('.json').read_text())
+            assert approach_meta['task_type'] == 'coverage_approach'
+            assert approach_meta['reference_path']['points'][0]['x'] == expected[0][0]
+            with approach_file.open() as stream:
+                approach_rows = list(csv.DictReader(stream))
+            assert approach_rows and rows
+            assert float(approach_rows[-1]['distance']) <= .15
+            assert float(rows[0]['x']) >= expected[0][0] - .15
+            assert len(rows) + len(approach_rows) == len(tracker.trajectory.poses)
+            assert all(float(row['progress']) >= 0 for row in rows)
+        else:
+            assert len(rows) == len(tracker.trajectory.poses)
+            for row, recorded in zip(rows, tracker.trajectory.poses):
+                assert float(row['x']) == recorded.pose.position.x
+                assert float(row['y']) == recorded.pose.position.y
+                assert recorded.header.frame_id == 'map'
 
         # Localization watchdog revokes ownership and does not restart on recovery.
         assert service(Trigger, '/system/mode/waypoint').success

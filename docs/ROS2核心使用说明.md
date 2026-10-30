@@ -122,7 +122,7 @@ ros2 topic info /reference_path --verbose
 
 支持输入原前端 `{"points":[{"longitude":...,"latitude":...},...]}` 格式、YAML points/rings 或单个 GeoJSON Polygon。`data/field_boundary.json` 当前与默认原点不在同一地区，直接使用会被拒绝，需换成实际地块数据或统一修改原点。
 
-规划成功发布 `map` 参考路径，但不会自动执行。机器人应靠近路径起点，再开始跟踪：
+规划成功发布 `map` 参考路径，但不会自动执行。确认当前位置至覆盖起点的直达通道可通行后，再明确开始任务：
 
 ```bash
 ros2 service call /safety/emergency_stop std_srvs/srv/SetBool '{data: false}'
@@ -130,7 +130,11 @@ ros2 service call /tracking/start std_srvs/srv/Trigger '{}'
 ros2 topic echo /tracking/status
 ```
 
-暂停、继续和取消对应 `/tracking/pause`、`/tracking/resume`、`/tracking/cancel`，类型均为 Trigger。规划取消是 `/planning/cancel`。处于运行或暂停状态时不接受中途替换路径，需要先取消再重新开始。任务轨迹在 map 下发布，配置目录后先保存同名 JSON 元数据，再持续写 CSV，每 20 条刷新，关闭任务时完成写盘。
+`/tracking/start` 现在包含自动接近：距起点超过 `start_tolerance` 时，先复用单点导航控制器直达首点（`phase=APPROACHING`），再自动转入 Pure Pursuit（`phase=TRACKING`）；距离较近则直接跟踪。全程使用 coverage 模式和 tracking 控制权，不切换模式、不重新规划、不自动解除急停。接近速度及角速度沿用覆盖的 `speed/max_angular`，到点阈值为 `min(0.15 m, start_tolerance/2)`。同一定位原点和局部运行半径内支持从任意有效位置起步，但没有为起点接近搜索绕障或跨地块通行路线，需先确认直达通道可通行。
+
+暂停、继续和取消对应 `/tracking/pause`、`/tracking/resume`、`/tracking/cancel`，类型均为 Trigger，对接近及覆盖两个阶段都生效。规划取消是 `/planning/cancel`。处于运行或暂停状态时不接受中途替换路径，需要先取消再重新开始。接近期间 `/tracking/error.vector.x` 是车辆到本次接近线段的偏离，不是到覆盖起点的剩余距离；暂停期间也持续发送偏差反馈，保留原有安全门限和超时检查。
+
+任务轨迹在 map 下发布，配置目录后先保存同名 JSON 元数据，再持续写 CSV，每 20 条刷新，关闭任务时完成写盘。自动接近另存 `approach_*.csv/.json`，列与单点导航一致；`track_*.csv` 仅记录覆盖跟踪阶段，保持原列格式，同名 JSON 的 `approach_csv` 指向接近记录。实时 `/tracked_path` 同时展示两阶段。
 
 多点导航配置 `trajectory_directory` 后也保存 `waypoint_*.csv` 与同名 JSON，字段为 `stamp,x,y,yaw,target_index,distance,heading_error`，目标索引从 0 开始；其目标与轨迹分别发布到 `/waypoint/targets` 和 `/waypoint/trajectory`，不会向覆盖跟踪的 `/reference_path` 写入目标点。
 

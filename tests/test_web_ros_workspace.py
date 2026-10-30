@@ -81,13 +81,29 @@ def test_web_modes_missions_planning_recordings_and_deadman():
         until(lambda: (client.get('/api/workspace').json().get('active_run') or {}).get('state') == 'READY', 30)
         assert system.backend.workspace_ros.get_parameters('coverage_server', ['min_turning_radius'])['min_turning_radius'] == 0.65
         assert not system.safety.gate.owner  # Planning never starts motion.
-        post('/api/test/align-path-start')
-        until(lambda: abs(system.localization.odom_pub.get_subscription_count()) > 0)
-        time.sleep(0.15)
+        # Use the actual current synthetic pose, without teleporting to the path.
+        until(lambda: system.tracker.pending_path is not None)
+        import math
+        start = system.tracker.pending_path.poses[0].pose.position
+        assert math.hypot(system.state['x'] - start.x, system.state['y'] - start.y) > .8
         post(f'/api/missions/{coverage["id"]}/start')
         until(lambda: system.tracker.state == 'RUNNING' and system.state['v'] > 0)
+        assert system.tracker.controller.phase == 'APPROACHING'
+        status = client.get('/api/devices').json()['tracking']
+        assert status['phase'] == 'APPROACHING' and status['approach_distance'] > .8
+        assert status['progress'] == 0 and system.safety.system_mode == 'coverage'
+        post('/api/tasks/tracking/pause')
+        until(lambda: system.state['v'] == system.state['w'] == 0)
+        assert system.safety.gate.owner == 'tracking'
+        post('/api/tasks/tracking/resume')
+        until(lambda: system.state['v'] > 0)
         post('/api/tasks/tracking/cancel')
         until(lambda: system.tracker.state == 'CANCELED' and not system.safety.gate.owner)
+        coverage_run = client.get('/api/workspace').json()['active_run']
+        archive = client.get(f'/api/runs/{coverage_run["id"]}/download')
+        assert archive.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(archive.content)) as data:
+            assert any(name.startswith('tracks/approach_') and name.endswith('.csv') for name in data.namelist())
         post('/api/system/mode', {'mode': 'base'})
         until(lambda: client.get('/api/devices').json()['safety']['mode'] == 'base')
         session = post('/api/control/arm')

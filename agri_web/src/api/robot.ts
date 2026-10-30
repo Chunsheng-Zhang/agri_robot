@@ -58,6 +58,9 @@ export interface SafetySnapshot extends Snapshot {
 }
 
 export interface TaskSnapshot extends Snapshot {
+  phase?: 'IDLE' | 'APPROACHING' | 'TRACKING'
+  approach_distance?: number | null
+  approach_target?: PathPoint | null
   elapsed_seconds?: number
   state?: string
   reason?: string

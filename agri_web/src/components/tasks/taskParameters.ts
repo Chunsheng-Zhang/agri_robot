@@ -26,7 +26,7 @@ export const parameterFields: Record<MissionMode, ParameterField[]> = {
     { key: 'lookahead', label: 'Pure Pursuit 前视距离', unit: 'm', min: 0.1, max: 10, step: 0.1 },
     { key: 'speed', label: '目标行驶速度', unit: 'm/s', min: 0.01, max: 1, step: 0.05 }, ...shared,
     { key: 'completion_tolerance', label: '终点完成阈值', unit: 'm', min: 0.02, max: 2, step: 0.05 },
-    { key: 'start_tolerance', label: '允许距路径起点距离', unit: 'm', min: 0.05, max: 5, step: 0.1 },
+    { key: 'start_tolerance', label: '直接跟踪起点距离', unit: 'm', min: 0.05, max: 5, step: 0.1, hint: '超过此距离会先单点导航到覆盖起点，再自动跟踪；不限制单点接近的总距离' },
     { key: 'search_window', label: '路径进度搜索窗口', unit: 'm', min: 0.1, max: 10, step: 0.1 },
     { key: 'max_path_error', label: '最大路径偏离', unit: 'm', min: 0.05, max: 10, step: 0.1 },
   ],
