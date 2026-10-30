@@ -125,6 +125,15 @@ async function refreshDashboard() {
   min-width: 0;
 }
 
+.dashboard-left {
+  display: flex;
+  flex-direction: column;
+}
+
+.dashboard-left > .location-card:not(.expanded) {
+  flex: 1;
+}
+
 .task-section {
   min-width: 0;
 }

@@ -61,10 +61,11 @@ defineExpose({ refreshData: refresh })
   </el-card>
 </template>
 <style scoped>
-.location-card { min-width: 0; border-radius: 10px; border-color: #e5eae7; }
+.location-card { display: flex; flex-direction: column; min-width: 0; border-radius: 10px; border-color: #e5eae7; }
+.location-card :deep(.el-card__body) { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .map-heading, .map-toolbar, .map-buttons { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }.map-heading { justify-content: space-between; }.map-heading strong { display: flex; align-items: center; gap: 7px; color: #263b30; }
 .map-toolbar { justify-content: space-between; margin-bottom: 12px; }.map-buttons { gap: 6px; }.map-buttons .el-button { margin-left: 0; }
-.map-area { position: relative; }.location-canvas { height: clamp(240px, 38vh, 360px); background: #edf2ed; border-radius: 8px; border: 1px solid #dce5dd; z-index: 0; }
+.map-area { position: relative; flex: 1; min-height: clamp(240px, 38vh, 360px); }.location-canvas { position: absolute; inset: 0; height: 100%; background: #edf2ed; border-radius: 8px; border: 1px solid #dce5dd; z-index: 0; }
 .map-notice { position: absolute; z-index: 1; top: 12px; left: 50px; right: 44px; padding: 10px 14px; border: 1px solid #e1e8dd; border-radius: 8px; background: #fffffff0; color: #586d5b; font-size: 12px; line-height: 1.7; box-shadow: 0 2px 10px #263b3012; }.map-notice small { display: block; }.map-notice.error { color: #98652d; }
 .map-loading { position: absolute; top: 12px; left: 50px; z-index: 1; background: #fffffff0; padding: 7px 10px; border-radius: 6px; font-size: 12px; color: #586d5b; }
 .north-indicator { position: absolute; top: 12px; right: 10px; z-index: 1; background: #fffffff0; padding: 6px; border-radius: 5px; font-size: 12px; color: #536a58; pointer-events: none; }
