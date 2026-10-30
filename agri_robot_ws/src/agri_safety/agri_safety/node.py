@@ -31,8 +31,8 @@ class Safety(Node):
             raise ValueError('Invalid initial system mode')
         self.mode_revision = 0
         self.control_lease = None
-        defaults = {'max_linear_speed': 0.3, 'max_lateral_speed': 0.3,
-                    'max_angular_speed': 0.6, 'command_timeout': 0.25,
+        defaults = {'max_linear_speed': 1.0, 'max_lateral_speed': 1.0,
+                    'max_angular_speed': 5.0, 'command_timeout': 0.25,
                     'sensor_timeout': 0.5, 'max_path_error': 2.0, 'publish_rate': 20.0,
                     'require_lidar': True, 'require_joy': False, 'allow_lateral': False,
                     'joy_timeout': 0.5, 'joy_estop_button': 6, 'scan_timeout': 0.5,

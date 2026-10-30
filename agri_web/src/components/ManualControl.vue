@@ -32,8 +32,10 @@ async function arm() {
     const started = Date.now() / 1000, response = await armManual(), ended = Date.now() / 1000
     if (ended - started > 0.3) { void stopManual(response.token); throw new Error('遥控响应延迟过高，请检查局域网或使用手柄') }
     token.value = response.token; seq = 0; offset = response.server_time - (started + ended) / 2
-    limits.value = response.limits
-    linear.value = Math.min(linear.value, response.limits.linear); angular.value = Math.min(angular.value, response.limits.angular)
+    // The Web API caps commands at 1 m/s and 2 rad/s, independently of the
+    // physical joystick's factory limits. Do not offer values it will reject.
+    limits.value = { linear: Math.min(response.limits.linear, 1), angular: Math.min(response.limits.angular, 2) }
+    linear.value = Math.min(linear.value, limits.value.linear); angular.value = Math.min(angular.value, limits.value.angular)
     timer = setInterval(() => void heartbeat(), 80)
   } catch (value) { ElMessage.error(value instanceof Error ? value.message : '无法取得遥控权限') }
   finally { busy.value = false }

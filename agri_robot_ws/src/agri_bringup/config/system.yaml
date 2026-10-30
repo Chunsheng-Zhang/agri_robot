@@ -74,12 +74,13 @@ path_tracker:
 
 safety:
   ros__parameters:
-    max_linear_speed: 0.3
-    max_angular_speed: 0.6
+    # Match the original X3 joystick's per-axis full-gear command limits.
+    max_linear_speed: 1.0
+    max_angular_speed: 5.0
     command_timeout: 0.25
     max_path_error: 2.0
     publish_rate: 20.0
-    max_lateral_speed: 0.3
+    max_lateral_speed: 1.0
     require_lidar: true
     scan_timeout: 0.5
     stop_distance: 0.8

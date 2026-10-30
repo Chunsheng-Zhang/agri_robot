@@ -32,6 +32,9 @@ def test_joystick_scan_camera_and_stop_chain(tmp_path):
         safety, adapter, chassis, camera, bench = Safety(), make_adapter(), ChassisAdapter(), CameraStatus(), Node('devices_bench')
         assert safety.get('joy_estop_button') == adapter.estop_index == 6
         assert adapter.reset_index == 8
+        assert safety.gate.max_linear == safety.gate.max_lateral == 1.0
+        assert safety.gate.max_angular == 5.0
+        assert (adapter.xspeed_limit, adapter.yspeed_limit, adapter.angular_speed_limit) == (1.0, 1.0, 5.0)
         nodes = [safety, adapter, chassis, camera, bench]
         for node in nodes:
             executor.add_node(node)

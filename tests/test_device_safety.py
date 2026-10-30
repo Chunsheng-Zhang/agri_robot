@@ -121,6 +121,29 @@ def test_out_of_order_motion_cannot_replace_newer_stop():
     assert gate.output(1.12, True) == (0, 0)
 
 
+def test_factory_speed_configuration_preserves_stop_and_timeout():
+    from pathlib import Path
+    import yaml
+    config = yaml.safe_load((Path(__file__).resolve().parents[1] /
+        'agri_robot_ws/src/agri_bringup/config/system.yaml').read_text())
+    joystick = config['joy_adapter']['ros__parameters']
+    safety = config['safety']['ros__parameters']
+    limits = (safety['max_linear_speed'], safety['max_lateral_speed'], safety['max_angular_speed'])
+    assert limits == (joystick['xspeed_limit'], joystick['yspeed_limit'], joystick['angular_speed_limit']) == (1, 1, 5)
+    gate = CommandGate(max_linear=limits[0], max_lateral=limits[1], max_angular=limits[2])
+    assert gate.stop(False, True)
+    assert gate.enable('manual', True, True, 1, 100)
+    gate.receive('manual', 1, 5, 1.01, 100.01, lateral=1)
+    assert gate.output(1.02, True) == (1, 5) and gate.lateral_output == 1
+    gate.receive('manual', -2, -9, 1.03, 100.03, lateral=-2)
+    assert gate.output(1.04, True) == (-1, -5) and gate.lateral_output == -1
+    assert gate.output(1.6, True) == (0, 0) and not gate.owner
+    gate.receive('manual', 1, 5, 1.61, 100.61, lateral=1)
+    assert gate.output(1.62, True) == (0, 0)  # No automatic restart after timeout.
+    assert gate.stop(True, True)
+    assert not gate.enable('manual', True, True, 2, 101)
+
+
 @pytest.mark.parametrize('profile', ['jetson', 'pc'])
 def test_new_buttons_are_unused_in_both_mappings(profile):
     validate_buttons(profile, 6, 8)
