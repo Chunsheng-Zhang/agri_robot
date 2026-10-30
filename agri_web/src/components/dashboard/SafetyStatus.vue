@@ -17,7 +17,7 @@ const obstacles = computed(() => isFresh(devices.value?.obstacles) && devices.va
 const cards = computed(() => [
   { label: '当前控制模式', text: safety.value ? modeText(safety.value.owner) : '未知', bad: !safety.value },
   { label: '手柄安全通道', text: safety.value ? (safety.value.joy_connected ? '在线' : '未连接') : '未知', bad: !safety.value?.joy_connected },
-  { label: '雷达数据', text: safety.value ? (safety.value.lidar_connected ? '有效' : '无效 / 超时') : '未知', bad: !safety.value?.lidar_connected },
+  { label: '雷达保护', text: safety.value ? (safety.value.lidar_required === false ? '已关闭' : safety.value.lidar_connected ? '有效' : '无效 / 超时') : '未知', bad: safety.value?.lidar_required === false || !safety.value?.lidar_connected },
   { label: '定位状态', text: safety.value ? (safety.value.localization_valid ? '有效' : '无效 / 超时') : '未知', bad: !safety.value?.localization_valid },
   { label: '软件急停锁定', text: typeof safety.value?.emergency_stop === 'boolean' ? (safety.value.emergency_stop ? '已锁定' : '已解除') : '未知', bad: safety.value?.emergency_stop !== false },
   { label: '障碍物停车', text: typeof safety.value?.obstacle_stop === 'boolean' ? (safety.value.obstacle_stop ? '已锁定' : '未锁定') : '未知', bad: safety.value?.obstacle_stop !== false },

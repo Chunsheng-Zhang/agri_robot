@@ -1,6 +1,7 @@
 """RTK core plus independent vendor joystick, 4ROS and Astra Pro Plus devices."""
 
 import os
+import json
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
@@ -20,11 +21,22 @@ def nodes(context):
     params = value('params_file')
     enabled = lambda name: value(name).lower() == 'true'
     require_joy = enabled('start_joy') if value('require_joy') == 'auto' else enabled('require_joy')
+    lidar_policy = value('require_lidar').lower()
+    if lidar_policy not in ('config', 'true', 'false'):
+        raise ValueError('require_lidar must be config, true or false')
+    safety_overrides = {'initial_mode': mode, 'require_joy': require_joy,
+                        'event_directory': value('event_directory')}
+    if lidar_policy != 'config':
+        safety_overrides['require_lidar'] = lidar_policy == 'true'
+    # ROS parameter order matters: load the YAML first, then node-specific
+    # overrides. Node.parameters would append another YAML after ros_arguments.
+    safety_arguments = ['--params-file', params]
+    for name, parameter in safety_overrides.items():
+        safety_arguments += ['-p', f'safety:{name}:={json.dumps(parameter)}']
     result = [
         Node(package='agri_base', executable='localization', parameters=[params], output='screen'),
         Node(package='agri_safety', executable='safety',
-             parameters=[params, {'initial_mode': mode, 'require_joy': require_joy,
-                                  'event_directory': value('event_directory')}], output='screen'),
+             ros_arguments=safety_arguments, output='screen'),
         Node(package='agri_base', executable='chassis_adapter', parameters=[params], output='screen'),
     ]
     if enabled('start_joy'):
@@ -118,7 +130,8 @@ def generate_launch_description():
         'path_directory': '', 'trajectory_directory': '',
         'rosmaster_pythonpath': '',
         'start_joy': 'false', 'joy_device_id': '0', 'require_joy': 'auto',
-        'start_lidar': 'false', 'lidar_model': '4ROS', 'lidar_port': '', 'lidar_params_file': '',
+        'start_lidar': 'false', 'require_lidar': 'config',
+        'lidar_model': '4ROS', 'lidar_port': '', 'lidar_params_file': '',
         'publish_laser_tf': 'true', 'start_camera': 'false', 'monitor_camera': 'false',
         'start_video': 'false',
         'event_directory': '',

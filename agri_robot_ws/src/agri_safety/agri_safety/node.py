@@ -342,7 +342,8 @@ class Safety(Node):
                 else (self.obstacle.reason if self.obstacle.active else self.gate.reason),
             'linear': msg.linear.x, 'lateral': msg.linear.y, 'angular': msg.angular.z,
             'localization_valid': self.localization_ok(), 'joy_connected': self.joystick_ok(),
-            'lidar_connected': self.lidar_ok(), 'allow_lateral': self.get('allow_lateral')}, allow_nan=False)))
+            'lidar_connected': self.lidar_ok(), 'lidar_required': self.get('require_lidar'),
+            'allow_lateral': self.get('allow_lateral')}, allow_nan=False)))
         self.estop_pub.publish(Bool(data=self.gate.emergency_stop))
         self.obstacle_pub.publish(Bool(data=self.obstacle.active))
         valid = self.lidar_ok()

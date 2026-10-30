@@ -53,6 +53,7 @@ export interface SafetySnapshot extends Snapshot {
   localization_valid?: boolean
   joy_connected?: boolean
   lidar_connected?: boolean
+  lidar_required?: boolean
   reason?: string
 }
 
