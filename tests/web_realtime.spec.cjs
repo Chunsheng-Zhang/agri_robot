@@ -66,14 +66,14 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('U
     await wait(() => document.body.innerText.includes('118.98765432'))
     await wait(() => document.querySelector('.field-card svg g') !== null)
     assert(!(await lidarControl.isChecked()))
-    await lidarControl.check()
+    await page.locator('.lidar-control .el-checkbox').click()
     await wait(() => document.querySelector('.lidar-control input')?.checked === true)
     rejectLidarChange = true
-    await lidarControl.uncheck()
+    await page.locator('.lidar-control .el-checkbox').click()
     await wait(() => document.body.innerText.includes('测试雷达切换被拒绝'))
     await wait(() => document.querySelector('.lidar-control input')?.checked === true)
     rejectLidarChange = false
-    await lidarControl.uncheck()
+    await page.locator('.lidar-control .el-checkbox').click()
     await wait(() => document.querySelector('.lidar-control input')?.checked === false)
     assert((await page.locator('.robot-card').innerText()).includes('0.37'))
     assert((await page.locator('.robot-card').innerText()).includes('MGX23 水平速度'))

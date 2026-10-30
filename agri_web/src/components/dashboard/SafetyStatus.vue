@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { resetObstacle, setLidarProtection } from '../../api/workspace'
 import { useRealtime, modeText, numberText } from '../../composables/useRealtime'
@@ -7,6 +7,7 @@ import { useRealtime, modeText, numberText } from '../../composables/useRealtime
 const { devices, safetyFresh, isFresh, error, refresh } = useRealtime()
 const resetting = ref(false)
 const changingLidar = ref(false)
+const lidarSelection = ref(false)
 async function changeLidar(value: boolean | string | number) {
   changingLidar.value = true
   try {
@@ -16,6 +17,7 @@ async function changeLidar(value: boolean | string | number) {
     ElMessage.error(value instanceof Error ? value.message : '雷达保护切换失败，请查看实际状态')
   } finally {
     await refresh()
+    lidarSelection.value = safety.value?.lidar_required === true
     changingLidar.value = false
   }
 }
@@ -26,6 +28,9 @@ async function clearObstacle() {
   finally { resetting.value = false; await refresh() }
 }
 const safety = computed(() => safetyFresh.value ? devices.value?.safety : null)
+watch(() => safety.value?.lidar_required, value => {
+  if (!changingLidar.value) lidarSelection.value = value === true
+}, { immediate: true })
 const obstacles = computed(() => isFresh(devices.value?.obstacles) && devices.value?.obstacles.valid ? devices.value.obstacles : null)
 const cards = computed(() => [
   { label: '当前控制模式', text: safety.value ? modeText(safety.value.owner) : '未知', bad: !safety.value },
@@ -41,7 +46,7 @@ const cards = computed(() => [
   <el-card shadow="never" class="safety-panel">
     <template #header><div class="heading"><span>实时设备与安全状态</span><el-tag :type="safetyFresh ? 'success' : 'warning'">{{ safetyFresh ? '状态新鲜' : '等待有效状态' }}</el-tag></div></template>
     <div class="lidar-control">
-      <el-checkbox :model-value="safety?.lidar_required === true"
+      <el-checkbox v-model="lidarSelection"
         :disabled="changingLidar || typeof safety?.lidar_required !== 'boolean'" @change="changeLidar">
         启用雷达障碍停车
       </el-checkbox>
