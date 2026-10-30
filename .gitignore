@@ -231,3 +231,6 @@ mgx23_ws/data/**
 /data/web/
 /data/paths/coverage_*.json
 
+# Keep the root project instructions and persistent user requirements versionable.
+!/AGENTS.md
+
