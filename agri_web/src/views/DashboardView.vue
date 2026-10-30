@@ -5,17 +5,13 @@ import { Refresh } from '@element-plus/icons-vue'
 import WelcomeBanner from '../components/dashboard/WelcomeBanner.vue'
 import StatisticsCards from '../components/dashboard/StatisticsCards.vue'
 import RobotStatus from '../components/dashboard/RobotStatus.vue'
-import FieldMap from '../components/dashboard/FieldMap.vue'
+import LocationMap from '../components/dashboard/LocationMap.vue'
 import TaskList from '../components/dashboard/TaskList.vue'
 import SafetyStatus from '../components/dashboard/SafetyStatus.vue'
 import CameraMonitor from '../components/dashboard/CameraMonitor.vue'
 
 const robotStatusRef = ref<{
   refreshData: () => Promise<void>
-} | null>(null)
-
-const fieldMapRef = ref<{
-  refreshPath: () => Promise<void>
 } | null>(null)
 
 const refreshing = ref(false)
@@ -26,10 +22,7 @@ async function refreshDashboard() {
   refreshing.value = true
 
   try {
-    await Promise.all([
-      robotStatusRef.value?.refreshData(),
-      fieldMapRef.value?.refreshPath(),
-    ])
+    await robotStatusRef.value?.refreshData()
   } finally {
     refreshing.value = false
   }
@@ -65,7 +58,7 @@ async function refreshDashboard() {
 
     <div class="dashboard-grid">
       <div class="dashboard-left">
-        <FieldMap ref="fieldMapRef" />
+        <LocationMap />
       </div>
 
       <div class="dashboard-right">

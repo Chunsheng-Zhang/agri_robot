@@ -32,10 +32,12 @@ from pathlib import Path as FilePath
 
 try:
     from .devices import device_cache, install_ros_devices, install_routes, service_call
+    from .map_position import geographic_pose
 except ImportError:
     import sys
     sys.path.insert(0, str(FilePath(__file__).resolve().parent.parent))
     from agri_backend.devices import device_cache, install_ros_devices, install_routes, service_call
+    from agri_backend.map_position import geographic_pose
 
 
 # ============================================================
@@ -781,6 +783,8 @@ def get_robot_status():
         "robot_id": ROBOT_ID,
         "latitude": devices["gnss"].get("latitude") if devices["gnss"]["fresh"] else None,
         "longitude": devices["gnss"].get("longitude") if devices["gnss"]["fresh"] else None,
+        "map_position": geographic_pose(data, devices['origin'].get('projection'))
+            if data_age is not None and 0 <= data_age < 1.0 and devices['origin']['fresh'] else None,
         "control_mode": devices["safety"].get("owner"),
         "task_state": devices.get(devices["safety"].get("owner"), {}).get("state"),
         "safety": devices["safety"],

@@ -25,6 +25,7 @@ export interface RobotStatusResponse {
   last_odom_time?: string | null
   latitude: number | null
   longitude: number | null
+  map_position?: MapPosition | null
   position_x: number | null
   position_y: number | null
   angular_speed: number | null
@@ -36,6 +37,15 @@ export interface RobotStatusResponse {
   odom_age_seconds: number | null
   reference_path_points: number
   tracked_path_points: number
+}
+
+export interface MapPosition {
+  latitude: number
+  longitude: number
+  bearing: number | null
+  reference: 'base_link'
+  source: 'mgx23_localization'
+  crs: 'EPSG:4326'
 }
 
 export interface Snapshot {
