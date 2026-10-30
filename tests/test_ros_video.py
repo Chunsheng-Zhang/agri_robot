@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from time import monotonic
 from urllib.error import URLError
-from urllib.parse import urlencode
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 import pytest
@@ -19,6 +19,8 @@ pytestmark = pytest.mark.skipif(os.environ.get('AGRI_ROS_TESTS') != '1', reason=
 
 
 def test_reused_video_server_streams_synthetic_images():
+    pytest.importorskip('fastapi')
+    pytest.importorskip('httpx')
     import rclpy
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.node import Node
@@ -68,7 +70,14 @@ def test_reused_video_server_streams_synthetic_images():
         deadline = monotonic() + 0.5
         while monotonic() < deadline:
             executor.spin_once(timeout_sec=0.02)
-        url = f'http://127.0.0.1:{port}/stream?' + urlencode({'topic': '/camera/color/image_raw', 'type': 'mjpeg'})
+        # Exercise exactly the query returned to the page, including the vendor
+        # server's requirement that ROS topic separators remain unescaped.
+        from fastapi.testclient import TestClient
+        from agri_backend import main
+        stream_info = TestClient(main.app).get('/api/camera/stream-info')
+        assert stream_info.status_code == 200
+        query = urlsplit(stream_info.json()['stream_url']).query
+        url = f'http://127.0.0.1:{port}/stream?{query}'
         def read_frame():
             with urlopen(url, timeout=4) as response:
                 return response.headers.get('Content-Type'), response.read(2048)

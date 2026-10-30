@@ -164,7 +164,9 @@ def install_routes(app, require_bridge):
     def stream_info():
         base = os.getenv('AGRI_VIDEO_BASE_URL', '/video').rstrip('/')
         topic = os.getenv('AGRI_CAMERA_TOPIC', '/camera/color/image_raw')
-        query = urlencode({'topic': topic, 'type': 'mjpeg', 'quality': 70, 'width': 640, 'height': 480})
+        # The bundled vendor server uses the raw query topic as a ROS name;
+        # percent-encoded slashes make it close the stream without a JPEG.
+        query = urlencode({'topic': topic, 'type': 'mjpeg', 'quality': 70, 'width': 640, 'height': 480}, safe='/')
         return {'stream_url': f'{base}/stream?{query}', 'camera': device_cache.snapshot()['camera']}
 
     @router.post('/api/robot/obstacle-stop/reset')

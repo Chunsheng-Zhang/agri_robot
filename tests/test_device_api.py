@@ -1,6 +1,7 @@
 import math
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
@@ -38,6 +39,9 @@ def test_http_routes_are_read_only_or_call_ros_services(monkeypatch):
     assert client.get('/api/camera/status').json()['connected'] is False
     url = client.get('/api/camera/stream-info').json()['stream_url']
     assert url.startswith('/video/stream?') and 'mjpeg' in url
+    # The vendor server does not decode percent escapes in the ROS topic.
+    assert 'topic=/camera/color/image_raw&' in url
+    assert parse_qs(urlsplit(url).query)['topic'] == ['/camera/color/image_raw']
     assert client.post('/api/tasks/unknown/start').status_code == 404
     assert client.post('/api/tasks/waypoint/start').status_code == 503
     assert client.post('/api/robot/emergency-stop/reset').status_code == 503
