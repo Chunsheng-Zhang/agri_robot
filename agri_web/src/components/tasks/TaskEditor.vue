@@ -6,6 +6,7 @@ import { useWorkspace } from '../../composables/useWorkspace'
 import { saveMission, previewMission, missionAction, downloadJson } from '../../api/workspace'
 import type { MissionDocument, MissionInput, MissionMode, GeoPoint, Preview, Projection } from '../../api/workspace'
 import { parameterFields } from './taskParameters'
+import { defaultTaskPoints } from './defaultTaskPoints'
 import type { ParameterField } from './taskParameters'
 import FieldMap from '../dashboard/FieldMap.vue'
 
@@ -22,7 +23,7 @@ let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
 const blank = (): Row => ({ longitude: '', latitude: '', dwell_time: Number(parameters.value.dwell_time ?? 2) })
-const toRows = (points: GeoPoint[]): Row[] => points.map(p => ({ longitude: String(p.longitude), latitude: String(p.latitude), dwell_time: p.dwell_time ?? 2 }))
+const toRows = (points: readonly GeoPoint[]): Row[] => points.map(p => ({ longitude: String(p.longitude), latitude: String(p.latitude), dwell_time: p.dwell_time ?? 2 }))
 const fingerprint = computed(() => JSON.stringify([name.value, rows.value, rings.value, parameters.value]))
 const dirty = computed(() => !id.value || fingerprint.value !== lastSaved.value)
 const editableRows = computed(() => props.kind === 'waypoint' ? rows.value : rings.value[ringIndex.value] || [])
@@ -54,12 +55,16 @@ function reset() {
   const mission = props.mission
   name.value = mission?.name || (props.kind === 'waypoint' ? '新多点导航任务' : '新农田覆盖任务')
   parameters.value = copy(mission?.parameters || props.defaults)
-  rows.value = mission?.waypoints.length ? toRows(copy(mission.waypoints)) : [blank()]
-  rings.value = loadBoundary(copy(mission?.boundary || null) as Record<string, unknown> | null)
+  rows.value = toRows(mission ? copy(mission.waypoints) : defaultTaskPoints)
+  rings.value = mission
+    ? loadBoundary(copy(mission.boundary) as Record<string, unknown> | null)
+    : [toRows(defaultTaskPoints)]
   ringIndex.value = 0; id.value = mission?.id; revision.value = mission?.revision
   origin.value = mission ? copy(mission.projection) : undefined
   preview.value = mission ? copy(mission.preview) : null
   error.value = ''; lastSaved.value = fingerprint.value
+  clearTimeout(timer)
+  if (!mission) timer = setTimeout(() => void buildPreview(true), 650)
 }
 watch([() => props.mission?.id, () => props.mission?.revision, () => props.kind], reset, { immediate: true })
 function parsePoints(points: Row[]): GeoPoint[] {
