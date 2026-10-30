@@ -72,7 +72,7 @@ def test_services_safety_and_closed_loop(tmp_path, approach_offset):
             scan.angle_max = scan.angle_min + 719 * scan.angle_increment
             scan.range_min, scan.range_max = 0.05, 10.0
             ranges = [5.0] * 720
-            ranges[360] = state['front']
+            ranges[345:376] = [state['front']] * 31
             scan.ranges = ranges
             scan_pub.publish(scan)
             if not state['sensors']:

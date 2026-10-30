@@ -40,7 +40,7 @@ class Safety(Node):
                     'laser_frame': 'laser', 'laser_x': 0.0435, 'laser_y': 0.00005258,
                     'laser_yaw': 0.0, 'body_length': 0.45, 'body_width': 0.35,
                     'footprint_margin': 0.05, 'front_half_angle': math.pi / 3,
-                    'rear_half_angle': math.pi / 3, 'min_valid_fraction': 0.5,
+                    'rear_half_angle': math.pi / 3, 'lidar_front_only': False, 'obstacle_fraction': 0.02,
                     'min_coverage_fraction': 0.85, 'event_directory': ''}
         for name, value in defaults.items():
             self.declare_parameter(name, value, ParameterDescriptor(read_only=True,
@@ -50,6 +50,8 @@ class Safety(Node):
         self.lidar_required = self.get('require_lidar')
         for name in ('sensor_timeout', 'joy_timeout', 'scan_timeout', 'publish_rate'):
             finite_positive(self.get(name), name)
+        if not math.isfinite(self.get('obstacle_fraction')) or not 0 < self.get('obstacle_fraction') <= 1:
+            raise ValueError('obstacle_fraction must be in (0, 1]')
         if not isinstance(self.get('joy_estop_button'), int) or self.get('joy_estop_button') < 0:
             raise ValueError('Invalid joystick estop button')
         self.timeout = self.get('sensor_timeout')
@@ -58,8 +60,8 @@ class Safety(Node):
                                 self.get('max_lateral_speed'))
         self.geometry = ScanGeometry(**{name: self.get(name) for name in (
             'laser_x', 'laser_y', 'laser_yaw', 'body_length', 'body_width',
-            'front_half_angle', 'rear_half_angle', 'min_valid_fraction', 'min_coverage_fraction')},
-            margin=self.get('footprint_margin'))
+            'front_half_angle', 'rear_half_angle', 'min_coverage_fraction')},
+            margin=self.get('footprint_margin'), front_only=self.get('lidar_front_only'))
         self.obstacle = ObstacleLatch(self.get('stop_distance'), self.get('resume_distance'), self.get('clear_duration'))
         self.valid, self.odom = False, None
         self.valid_time, self.pose_time = -math.inf, -math.inf
@@ -196,9 +198,6 @@ class Safety(Node):
             self.scan_valid, self.scan_reason = True, ''
         except ValueError as exc:
             self.scan_valid, self.scan_reason = False, str(exc)
-        if self.obstacle.active:
-            valid, clearance = self.geometry.clearance(*self.obstacle.direction) if self.lidar_ok() else (False, 0.0)
-            self.obstacle.observe(valid, clearance, monotonic())
         self.tick()
 
     def on_command(self, source, msg):
@@ -250,7 +249,7 @@ class Safety(Node):
 
     def reset_obstacle(self, request, response):
         response.success = self.obstacle.reset(monotonic(), self.lidar_ok())
-        response.message = 'Obstacle latch cleared; task remains paused' if response.success else 'Require continuous valid clearance above resume distance'
+        response.message = 'Obstacle latch cleared; task remains paused' if response.success else 'Require fresh scans and sustained obstacle fraction below threshold in resume region'
         if response.success:
             self.gate.samples.clear()
             self.gate.granted_at = monotonic()
@@ -328,16 +327,24 @@ class Safety(Node):
             if not self.gate.emergency_stop:
                 self.event('EMERGENCY_STOP', 'Joystick/control heartbeat lost')
                 self.gate.stop(True, True)
+        sample = self.gate.samples.get(self.gate.owner)
+        direction = (sample[0], sample[3], sample[1]) if sample else (1.0, 0.0, 0.0)
+        if self.obstacle.active:
+            direction = self.obstacle.direction
+        assessment = self.geometry.occupancy(*direction, self.obstacle.stop_distance, self.obstacle.resume_distance)
+        observed = self.lidar_ok() and assessment['sector_observed']
+        threshold = self.get('obstacle_fraction')
+        if self.obstacle.active:
+            self.obstacle.observe_clear(observed,
+                assessment['resume_fraction'] is not None and assessment['resume_fraction'] < threshold,
+                monotonic())
         if self.lidar_required and self.gate.owner and not self.obstacle.active:
-            sample = self.gate.samples.get(self.gate.owner)
-            direction = (sample[0], sample[3], sample[1]) if sample else (0.0, 0.0, 0.0)
             if not self.lidar_ok():
                 self.obstacle.latch('LaserScan invalid or timed out', direction)
                 self.event('OBSTACLE_STOP', self.obstacle.reason)
             elif sample and any(abs(v) > 1e-4 for v in direction):
-                valid, clearance = self.geometry.clearance(*direction)
-                if not valid or clearance < self.obstacle.stop_distance:
-                    self.obstacle.latch('Motion sector unknown' if not valid else 'Obstacle inside stop clearance', direction)
+                if not observed or assessment['stop_fraction'] >= threshold:
+                    self.obstacle.latch('Motion scan coverage incomplete' if not observed else 'Obstacle fraction reached stop threshold', direction)
                     self.event('OBSTACLE_STOP', self.obstacle.reason)
         if not self.lidar_ok():
             self.obstacle.clear_since = None
@@ -364,11 +371,16 @@ class Safety(Node):
             'linear': msg.linear.x, 'lateral': msg.linear.y, 'angular': msg.angular.z,
             'localization_valid': self.localization_ok(), 'joy_connected': self.joystick_ok(),
             'lidar_connected': self.lidar_ok(), 'lidar_required': self.lidar_required,
+            'lidar_front_only': self.geometry.front_only,
+            'obstacle_fraction': threshold,
             'allow_lateral': self.get('allow_lateral')}, allow_nan=False)))
         self.estop_pub.publish(Bool(data=self.gate.emergency_stop))
         self.obstacle_pub.publish(Bool(data=self.obstacle.active))
         valid = self.lidar_ok()
         data = {'stamp': self.get_clock().now().nanoseconds * 1e-9, 'frame_id': 'base_link',
+                'front_only': self.geometry.front_only,
+                **{k: v if valid else None for k, v in assessment.items()},
+                'obstacle_fraction': threshold,
                 'valid': valid, 'reason': (self.scan_reason or 'LaserScan timeout or publisher conflict') if not valid else '',
                 'global_range': self.geometry.global_distance if valid else None,
                 'front_distance': self.geometry.nearest_sector(0, self.geometry.front_angle) if valid else None,

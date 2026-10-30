@@ -56,9 +56,9 @@ def test_invalid_values_filtered_not_reported_as_obstacles():
     assert geometry.clearance(0.2, 0, 0)[0]
 
 
-def test_unknown_sector_fails_closed():
+def test_absent_returns_do_not_invalidate_received_sector():
     geometry = scan(invalid_sector=1.1)
-    assert not geometry.clearance(0.2, 0, 0)[0]
+    assert geometry.clearance(0.2, 0, 0)[0]
     assert geometry.clearance(-0.2, 0, 0)[0]
 
 
@@ -70,10 +70,99 @@ def test_partial_scan_cannot_claim_rotation_coverage():
     assert not geometry.clearance(-0.2, 0, 0)[0]
 
 
-@pytest.mark.parametrize('ranges', [[math.inf] * 720, [math.nan] * 720, [0.0] * 720, []])
-def test_all_invalid_scan_is_fault(ranges):
+def test_front_only_excludes_rear_body_without_restricting_turns_or_reverse():
+    geometry = scan(ScanGeometry(laser_x=0, laser_y=0, front_only=True),
+                    [(math.radians(-100), 0.06), (math.radians(100), 0.06), (math.pi, 0.1)])
+    assert geometry.global_distance == 5.0
+    assert not geometry.sector_valid(math.pi, geometry.rear_angle)
+    for motion in ((0.2, 0, 0), (0.2, 0, 0.3), (0, 0, -0.3), (-0.2, 0, 0), (0, 0.2, 0)):
+        valid, clearance = geometry.clearance(*motion)
+        assert valid and clearance > 0.8
+
+
+def test_front_only_still_detects_forward_and_front_side_turn_obstacles():
+    geometry = scan(ScanGeometry(laser_x=0, laser_y=0, front_only=True), [(0, 0.5)])
+    assert geometry.clearance(0.2, 0, 0) == pytest.approx((True, 0.275))
+    geometry = scan(ScanGeometry(laser_x=0, laser_y=0, front_only=True), [(math.radians(80), 0.6)])
+    valid, clearance = geometry.clearance(0, 0, 0.3)
+    assert valid and clearance < 0.8
+
+
+def test_front_only_absent_returns_are_not_obstacles():
+    geometry = scan(ScanGeometry(laser_x=0, laser_y=0, front_only=True), invalid_sector=1.4)
+    for motion in ((0.2, 0, 0), (-0.2, 0, 0), (0, 0, 0.3)):
+        assert geometry.clearance(*motion)[0]
+    geometry = scan(ScanGeometry(front_only=True), invalid_sector=math.pi / 2 + .01)
+    assert geometry.clearance(.2, 0, .2) == (True, math.inf)
+
+
+def test_front_only_follows_mount_yaw_and_supports_reversed_scan_order():
+    values = [5.0] * 721
+    # Sensor facing backward: laser zero is vehicle rear and must be excluded.
+    values[360] = .06
+    for order in (1, -1):
+        geometry = ScanGeometry(laser_x=0, laser_y=0, laser_yaw=math.pi, front_only=True)
+        geometry.update(values, -order * math.pi, order * math.pi,
+                        order * math.pi / 360, .01, 50)
+        assert geometry.global_distance == 5.0
+        assert geometry.clearance(.2, 0, .2)[0]
+
+
+@pytest.mark.parametrize('value', [math.inf, math.nan, 0.0, -1.0, 100.0])
+def test_all_absent_or_out_of_range_returns_have_zero_obstacle_occupancy(value):
+    geometry = ScanGeometry(front_only=True)
+    geometry.update([value] * 720, -math.pi, math.pi - math.pi / 360, math.pi / 360, .05, 10)
+    result = geometry.occupancy(.2, 0, .2, .8, 1.2)
+    assert result['sector_observed']
+    assert result['stop_points'] == result['resume_points'] == 0
+    assert result['stop_fraction'] == result['resume_fraction'] == 0
+
+
+def test_empty_scan_still_rejected():
     with pytest.raises(ValueError):
-        ScanGeometry().update(ranges, -math.pi, math.pi - math.pi / 360, math.pi / 360, 0.05, 10)
+        ScanGeometry().update([], -math.pi, math.pi - math.pi / 360, math.pi / 360, 0.05, 10)
+
+
+def test_zero_is_absent_even_when_driver_range_min_is_zero():
+    geometry = ScanGeometry(front_only=True)
+    geometry.update([0.0] * 720, -math.pi, math.pi - math.pi / 360, math.pi / 360, 0.0, 10)
+    assert geometry.occupancy(.2, 0, 0, .8, 1.2)['stop_fraction'] == 0
+
+
+def occupancy_scan(count, distance=.5, slots=2000):
+    geometry = ScanGeometry(laser_x=0, laser_y=0, front_only=True)
+    values = [0.0] * slots
+    start = slots // 2 - count // 2
+    values[start:start + count] = [distance] * count
+    step = 2 * math.pi / slots
+    geometry.update(values, -math.pi + step / 2, math.pi - step / 2, step, .01, 50)
+    return geometry
+
+
+@pytest.mark.parametrize('count,stop', [(19, False), (20, True), (21, True)])
+def test_occupancy_uses_all_front_slots_and_two_percent_boundary(count, stop):
+    result = occupancy_scan(count).occupancy(.2, 0, 0, .8, 1.2)
+    assert result['total_beams'] == 1000
+    assert result['stop_points'] == count
+    assert (result['stop_fraction'] >= .02) is stop
+
+
+def test_combined_turn_does_not_count_same_obstacle_twice():
+    result = occupancy_scan(19).occupancy(.2, 0, .2, .8, 1.2)
+    assert result['stop_points'] == 19 and result['stop_fraction'] < .02
+
+
+def test_recovery_fraction_uses_larger_resume_region_and_stays_manual():
+    result = occupancy_scan(30, distance=1.3).occupancy(.2, 0, 0, .8, 1.2)
+    assert result['stop_fraction'] == 0
+    assert result['resume_fraction'] >= .02
+    latch = ObstacleLatch()
+    latch.latch('occupancy', (.2, 0, 0))
+    latch.observe_clear(True, False, 1)
+    assert not latch.reset(5, True)
+    latch.observe_clear(True, True, 6)
+    assert latch.active and not latch.reset(6.5, True)
+    assert latch.reset(7.1, True)
 
 
 def test_obstacle_recovery_is_explicit_and_direction_is_retained():

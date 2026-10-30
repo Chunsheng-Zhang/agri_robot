@@ -64,7 +64,8 @@ def test_joystick_scan_camera_and_stop_chain(tmp_path):
                 scan.angle_max = scan.angle_min + 719 * scan.angle_increment
                 scan.range_min, scan.range_max = 0.05, 10.0
                 values = [5.0] * 720
-                values[360], values[0] = state['front'], state['rear']
+                values[345:376] = [state['front']] * 31
+                values[:16], values[-15:] = [state['rear']] * 16, [state['rear']] * 15
                 scan.ranges = values
                 scan_pub.publish(scan)
             if state['image']:

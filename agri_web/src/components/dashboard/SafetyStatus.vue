@@ -47,16 +47,23 @@ const cards = computed(() => [
       </el-checkbox>
       <span>{{ changingLidar ? '正在切换，请等待安全节点反馈…' : '默认关闭；切换会停车并释放控制权，任务需重新启动。' }}</span>
     </div>
+    <el-alert v-if="safety?.lidar_front_only" title="雷达仅检测车头前方 180°；允许导航和转向，后方与侧后方无雷达保护。" type="warning" :closable="false" />
     <div class="safety-grid">
       <div v-for="card in cards" :key="card.label" class="safety-item">
         <span>{{ card.label }}</span><el-tag :type="card.bad ? 'warning' : 'success'">{{ card.text }}</el-tag>
       </div>
     </div>
     <div class="distances">
-      <span>全局最近：<strong>{{ numberText(obstacles?.global_range) }} m</strong></span>
+      <span>{{ safety?.lidar_front_only ? '检测范围内最近' : '全局最近' }}：<strong>{{ numberText(obstacles?.global_range) }} m</strong></span>
       <span>前方：<strong>{{ numberText(obstacles?.front_valid ? obstacles.front_distance : null) }} m</strong></span>
-      <span>后方：<strong>{{ numberText(obstacles?.rear_valid ? obstacles.rear_distance : null) }} m</strong></span>
+      <span v-if="safety?.lidar_front_only">后方：<strong>未检测</strong></span>
+      <span v-else>后方：<strong>{{ numberText(obstacles?.rear_valid ? obstacles.rear_distance : null) }} m</strong></span>
     </div>
+    <p v-if="typeof safety?.obstacle_fraction === 'number'" class="hint">
+      停车区域障碍占比：{{ typeof obstacles?.stop_fraction === 'number' ? numberText(obstacles.stop_fraction * 100) + '%' : '未更新' }}
+      （{{ obstacles?.stop_points ?? '—' }}/{{ obstacles?.total_beams ?? '—' }} 点）；
+      达到 {{ numberText(safety.obstacle_fraction * 100) }}% 停车。零值和无返回不计为障碍，细小障碍可能低于门槛。
+    </p>
     <el-button v-if="safety?.obstacle_stop" type="warning" plain :loading="resetting" :disabled="!obstacles?.recovery_ready" @click="clearObstacle">{{ obstacles?.recovery_ready ? '人工解除障碍停车' : '等待持续有效的恢复净空' }}</el-button>
     <el-alert :title="error || safety?.reason || '等待 ROS 2 安全模块'" :type="safety?.motion_inhibited === false ? 'info' : 'warning'" :closable="false" />
     <p class="hint">最近距离用于观察，停车依据由安全模块按运动方向和车体净空判定。定位有效不代表已确认 RTK 固定解。</p>

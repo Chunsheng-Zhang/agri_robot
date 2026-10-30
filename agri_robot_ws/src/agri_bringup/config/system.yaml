@@ -82,6 +82,7 @@ safety:
     publish_rate: 20.0
     max_lateral_speed: 1.0
     require_lidar: false  # Enable at runtime with the Web lidar obstacle-stop checkbox.
+    lidar_front_only: true  # Front +/-90 degrees only; rear/side-rear unprotected, including turns.
     scan_timeout: 0.5
     stop_distance: 0.8
     resume_distance: 1.2
@@ -89,9 +90,9 @@ safety:
     body_length: 0.45  # Initial X3 footprint estimate; measure actual dimensions.
     body_width: 0.35
     footprint_margin: 0.05
-    front_half_angle: 1.0471975511965976
+    front_half_angle: 1.5707963267948966
     rear_half_angle: 1.0471975511965976
-    min_valid_fraction: 0.5
+    obstacle_fraction: 0.02  # Stop when >=2% of all scoped slots detect obstacles inside stop clearance.
     min_coverage_fraction: 0.85
 
 coverage_server:

@@ -56,6 +56,8 @@ export interface SafetySnapshot extends Snapshot {
   joy_connected?: boolean
   lidar_connected?: boolean
   lidar_required?: boolean
+  lidar_front_only?: boolean
+  obstacle_fraction?: number
   reason?: string
 }
 
@@ -85,6 +87,11 @@ export interface DevicesResponse {
     front_valid?: boolean
     rear_valid?: boolean
     recovery_ready?: boolean
+    total_beams?: number | null
+    stop_points?: number | null
+    stop_fraction?: number | null
+    resume_fraction?: number | null
+    obstacle_fraction?: number
   }
   manual: Snapshot & { connected?: boolean; profile?: string; linear_gear?: number; angular_gear?: number }
   camera: Snapshot & { connected?: boolean; topic?: string; width?: number; height?: number; encoding?: string; reason?: string }

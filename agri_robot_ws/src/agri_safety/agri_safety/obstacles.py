@@ -11,18 +11,23 @@ class ScanGeometry:
     def __init__(self, laser_x=0.0435, laser_y=0.00005258, laser_yaw=0.0,
                  body_length=0.45, body_width=0.35, margin=0.05,
                  front_half_angle=math.pi / 3, rear_half_angle=math.pi / 3,
-                 min_valid_fraction=0.5, min_coverage_fraction=0.85):
+                 min_coverage_fraction=0.85, front_only=False):
         values = (laser_x, laser_y, laser_yaw, body_length, body_width, margin,
-                  front_half_angle, rear_half_angle, min_valid_fraction, min_coverage_fraction)
+                  front_half_angle, rear_half_angle, min_coverage_fraction)
         if (not all(math.isfinite(v) for v in values) or min(body_length, body_width) <= 0
                 or margin < 0 or not 0 < front_half_angle <= math.pi
                 or not 0 < rear_half_angle <= math.pi
-                or not 0 < min_valid_fraction <= 1 or not 0 < min_coverage_fraction <= 1):
+                or not 0 < min_coverage_fraction <= 1):
             raise ValueError('Invalid laser/body/coverage configuration')
+        if not isinstance(front_only, bool):
+            raise ValueError('front_only must be boolean')
+        self.front_only = front_only
         self.x, self.y, self.yaw = laser_x, laser_y, laser_yaw
         self.half_length, self.half_width = body_length / 2, body_width / 2
         self.margin, self.front_angle, self.rear_angle = margin, front_half_angle, rear_half_angle
-        self.min_valid, self.min_coverage = min_valid_fraction, min_coverage_fraction
+        if front_only:
+            self.front_angle = math.pi / 2
+        self.min_coverage = min_coverage_fraction
         self.points, self.beams = [], []
         self.step = 0.0
         self.global_distance = None
@@ -40,58 +45,85 @@ class ScanGeometry:
         c, s = math.cos(self.yaw), math.sin(self.yaw)
         for i, r in enumerate(ranges):
             a = angle_min + i * angle_increment
-            valid = math.isfinite(r) and range_min <= r <= range_max
-            self.beams.append((angle_delta(a + self.yaw, 0), valid))
+            bearing = angle_delta(a + self.yaw, 0)
+            # Scope follows vehicle orientation about the laser origin. Excluded
+            # beams are NOT free-space rays; retain the original resolution.
+            if self.front_only and abs(bearing) > math.pi / 2:
+                continue
+            valid = math.isfinite(r) and 0 < r and range_min <= r <= range_max
+            self.beams.append((bearing, valid))
             if not valid:
                 continue
             lx, ly = r * math.cos(a), r * math.sin(a)
             self.points.append((self.x + c * lx - s * ly, self.y + s * lx + c * ly))
             self.global_distance = r if self.global_distance is None else min(self.global_distance, r)
-        if not self.points:
-            raise ValueError('No valid laser returns; unknown is not free space')
+        # No return is not an obstacle. Frame integrity/freshness is checked
+        # separately; never manufacture a distance for an absent return.
 
     def sector_valid(self, center, half_angle):
         selected = [valid for angle, valid in self.beams
                     if abs(angle_delta(angle, center)) <= half_angle + self.step / 2]
         # Expected angular samples are independent of the received scan span.
         expected = max(1, int(2 * half_angle / self.step)) if self.step else 1
-        return (len(selected) >= expected * self.min_coverage
-                and sum(selected) >= max(1, len(selected) * self.min_valid))
+        return len(selected) >= expected * self.min_coverage
 
     def nearest_sector(self, center, half_angle):
         values = [math.hypot(x, y) for x, y in self.points
                   if abs(angle_delta(math.atan2(y, x), center)) <= half_angle]
         return min(values) if values else None
 
-    def clearance(self, vx, vy, omega):
-        """Conservative swept body corridor, plus circumscribed turn disk.
+    def motion_clearances(self, vx, vy, omega):
+        """One clearance per detected point in the motion corridor/turn disk.
 
-        Returns validity and minimum body clearance in metres. Infinity means
-        the measured, sufficiently observed corridor has no obstacle return.
+        The denominator includes ALL received slots in the protection scope,
+        including absent returns. A point in both swept regions is counted once.
         """
         if not all(math.isfinite(v) for v in (vx, vy, omega)):
-            return False, 0.0
-        values = []
-        if math.hypot(vx, vy) > 1e-4:
+            return False, [], 0
+        total = len(self.beams)
+        # Explicit partial protection: rear observations are neither required nor
+        # checked, including during turns/reversing. Never claim rear coverage.
+        if self.front_only and not self.sector_valid(0, math.pi / 2):
+            return False, [], total
+        translating, rotating = math.hypot(vx, vy) > 1e-4, abs(omega) > 1e-4
+        if translating:
             direction = math.atan2(vy, vx)
             half_angle = self.rear_angle if vx < 0 and abs(vx) >= abs(vy) else self.front_angle
-            if not self.sector_valid(direction, half_angle):
-                return False, 0.0
+            if not self.front_only and not self.sector_valid(direction, half_angle):
+                return False, [], total
             dx, dy = math.cos(direction), math.sin(direction)
             longitudinal = abs(dx) * self.half_length + abs(dy) * self.half_width
             lateral = abs(dy) * self.half_length + abs(dx) * self.half_width + self.margin
-            for x, y in self.points:
+        if rotating and not self.front_only and not self.sector_valid(0, math.pi):
+            return False, [], total
+        radius = math.hypot(self.half_length, self.half_width) + self.margin
+        values = []
+        for x, y in self.points:
+            clearance = math.inf
+            if translating:
                 along, across = dx * x + dy * y, -dy * x + dx * y
                 if along >= -longitudinal and abs(across) <= lateral:
                     # Points already inside the footprint are always hazardous.
                     if along >= 0 or (abs(x) <= self.half_length and abs(y) <= self.half_width):
-                        values.append(max(0.0, along - longitudinal))
-        if abs(omega) > 1e-4:
-            if not self.sector_valid(0, math.pi):
-                return False, 0.0
-            radius = math.hypot(self.half_length, self.half_width) + self.margin
-            values.extend(max(0.0, math.hypot(x, y) - radius) for x, y in self.points)
-        return bool(self.points), min(values, default=math.inf)
+                        clearance = max(0.0, along - longitudinal)
+            if rotating:
+                clearance = min(clearance, max(0.0, math.hypot(x, y) - radius))
+            if math.isfinite(clearance):
+                values.append(clearance)
+        return bool(total), values, total
+
+    def clearance(self, vx, vy, omega):
+        """Nearest detected body clearance; absence of returns is infinity."""
+        valid, values, _ = self.motion_clearances(vx, vy, omega)
+        return valid, min(values, default=math.inf) if valid else 0.0
+
+    def occupancy(self, vx, vy, omega, stop_distance, resume_distance):
+        valid, values, total = self.motion_clearances(vx, vy, omega)
+        stop_count = sum(v < stop_distance for v in values)
+        resume_count = sum(v <= resume_distance for v in values)
+        return {'sector_observed': valid, 'total_beams': total,
+                'stop_points': stop_count, 'stop_fraction': stop_count / total if total else None,
+                'resume_points': resume_count, 'resume_fraction': resume_count / total if total else None}
 
 
 class ObstacleLatch:
@@ -114,7 +146,10 @@ class ObstacleLatch:
         return first
 
     def observe(self, valid, clearance, now):
-        if not valid or clearance <= self.resume_distance:
+        self.observe_clear(valid, clearance > self.resume_distance, now)
+
+    def observe_clear(self, valid, clear, now):
+        if not valid or not clear:
             self.clear_since = None
         elif self.clear_since is None:
             self.clear_since = now
