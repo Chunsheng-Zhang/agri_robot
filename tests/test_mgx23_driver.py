@@ -78,3 +78,16 @@ def test_nan_and_low_accuracy_samples_rejected():
     h = Harness(frame(latitude=float('nan')) + frame(device_time=2, accuracy=2))
     h.receive_data()
     assert not h.position_pub.messages
+
+
+def test_navi_velocity_offsets_and_units_from_manual():
+    packet = bytearray(frame())
+    # Manual §2.2: one-based positions 37/41/45, little-endian float, m/s.
+    struct.pack_into('<fff', packet, 36, 0.3, -0.4, 2.0)
+    struct.pack_into('<H', packet, 96, sum(packet[:96]) & 0xffff)
+    h = Harness(bytes(packet))
+    h.receive_data()
+    v = h.velocity_stamped_pub.messages[0].vector
+    assert abs(v.x - 0.3) < 1e-6
+    assert abs(v.y + 0.4) < 1e-6
+    assert v.z == 2.0

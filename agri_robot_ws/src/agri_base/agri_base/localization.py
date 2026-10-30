@@ -34,6 +34,8 @@ class Localization(Node):
             raise ValueError('Invalid INS extrinsics')
         self.require_fix = self.get_parameter('require_fix_status').value
         self.fixes, self.attitudes, self.velocities = {}, {}, {}
+        self.pending_velocity = {}
+        self.velocity_wait = min(0.02, self.timeout / 4)
         self.last_stamp = -math.inf
         self.last_pair = -math.inf
         self.valid = False
@@ -57,7 +59,10 @@ class Localization(Node):
         self.create_timer(0.05, self.check_health)
 
     def insert(self, cache, msg):
-        cache[stamp_seconds(msg.header.stamp)] = msg
+        stamp = stamp_seconds(msg.header.stamp)
+        if stamp <= self.last_stamp:
+            return
+        cache[stamp] = msg
         while len(cache) > 30:
             del cache[next(iter(cache))]
 
@@ -71,10 +76,17 @@ class Localization(Node):
 
     def on_velocity(self, msg):
         self.insert(self.velocities, msg)
+        self.pair(stamp_seconds(msg.header.stamp))
 
-    def pair(self, stamp):
+    def pair(self, stamp, allow_missing_velocity=False):
         if stamp not in self.fixes or stamp not in self.attitudes or stamp <= self.last_stamp:
             return
+        # DDS may deliver fix/attitude before velocity from the very same NAVI frame.
+        # Wait briefly for its exact timestamp, without making pose depend on velocity.
+        if stamp not in self.velocities and not allow_missing_velocity:
+            self.pending_velocity.setdefault(stamp, monotonic())
+            return
+        self.pending_velocity.pop(stamp, None)
         fix, att = self.fixes.pop(stamp), self.attitudes.pop(stamp)
         try:
             if (not fresh_stamp(self, fix.header.stamp, self.timeout)
@@ -122,9 +134,22 @@ class Localization(Node):
         except ValueError as exc:
             self.valid = False
             self.get_logger().warning(str(exc), throttle_duration_sec=2.0)
-        self.check_health()
+        for cache in (self.fixes, self.attitudes, self.velocities):
+            for old in list(cache):
+                if old <= self.last_stamp:
+                    del cache[old]
+        self.publish_health()
 
     def check_health(self):
+        now = monotonic()
+        for stamp, since in sorted(self.pending_velocity.copy().items()):
+            if stamp <= self.last_stamp or stamp not in self.fixes or stamp not in self.attitudes:
+                self.pending_velocity.pop(stamp, None)
+            elif now - since >= self.velocity_wait:
+                self.pair(stamp, allow_missing_velocity=True)
+        self.publish_health()
+
+    def publish_health(self):
         self.valid_pub.publish(Bool(data=self.valid and monotonic() - self.last_pair < self.timeout))
 
 

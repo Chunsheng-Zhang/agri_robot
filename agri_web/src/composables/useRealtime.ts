@@ -19,6 +19,9 @@ const safetyFresh = computed(() => devicesFresh.value && devices.value?.safety.f
 const poseFresh = computed(() => robotFresh.value && robot.value?.ros_connected === true
   && robot.value.online && robot.value.odom_age_seconds !== null
   && robot.value.odom_age_seconds * 1000 + now.value - robotReceived.value < 1000)
+const velocityFresh = computed(() => robotFresh.value && robot.value?.ros_connected === true
+  && robot.value.speed_source === 'mgx23_ned' && robot.value.velocity_age_seconds != null
+  && robot.value.velocity_age_seconds * 1000 + now.value - robotReceived.value < 1500)
 
 async function refresh() {
   if (loading.value) return
@@ -73,7 +76,7 @@ export function useRealtime() {
   })
   const isFresh = (value?: Snapshot | null) => devicesFresh.value && value?.fresh === true
   return { robot: readonly(robot), devices: readonly(devices), error: readonly(error),
-    loading: readonly(loading), robotFresh, devicesFresh, safetyFresh, poseFresh, isFresh, refresh }
+    loading: readonly(loading), robotFresh, devicesFresh, safetyFresh, poseFresh, velocityFresh, isFresh, refresh }
 }
 
 export function numberText(value: number | null | undefined, digits = 2): string {

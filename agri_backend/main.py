@@ -64,10 +64,10 @@ try:
 
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.node import Node
-    from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
+    from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy, qos_profile_sensor_data
 
     from nav_msgs.msg import Odometry, Path
-    from geometry_msgs.msg import Twist
+    from geometry_msgs.msg import Twist, Vector3Stamped
     from std_msgs.msg import Bool
 
 except Exception as exc:
@@ -83,6 +83,7 @@ ROBOT_ID = "agri_robot_01"
 
 # 里程计超过该时间未更新，则认为机器人离线。
 ODOM_TIMEOUT_SECONDS = 3.0
+VELOCITY_TIMEOUT_SECONDS = 0.5
 
 # 允许的 Vue 前端跨域来源。
 ALLOWED_ORIGINS = [
@@ -114,8 +115,11 @@ class RobotState:
             # 机器人航向角，单位：度
             "heading": None,
 
-            # 里程计反馈的实际速度
+            # MGX23 NAVI 水平速度；角速度来自 INS 航向差分。
             "speed": None,
+            "velocity_ned": None,
+            "last_velocity_stamp": None,
+            "last_velocity_monotonic": None,
             "angular_speed": None,
 
             # ROS 2 速度指令
@@ -208,6 +212,7 @@ if ROS_AVAILABLE:
 
         订阅：
             /odom
+            /mgx23/velocity_stamped
             /cmd_vel
             /reference_path
             /tracked_path
@@ -228,6 +233,10 @@ if ROS_AVAILABLE:
                 "/odom",
                 self.odom_callback,
                 10,
+            )
+            self.create_subscription(
+                Vector3Stamped, "/mgx23/velocity_stamped",
+                self.velocity_callback, qos_profile_sensor_data,
             )
 
             # ------------------------------------------------
@@ -313,7 +322,7 @@ if ROS_AVAILABLE:
         # ====================================================
 
         def odom_callback(self, msg: Odometry):
-            """读取位置、航向角和实际运动速度。"""
+            """读取位置、航向角及 INS 航向差分角速度。"""
 
             # 机器人位置
             position = msg.pose.pose.position
@@ -337,17 +346,9 @@ if ROS_AVAILABLE:
 
             heading = degrees(yaw) % 360.0
 
-            # 里程计反馈的实际运动速度。
-            velocity = msg.twist.twist
+            angular_speed = msg.twist.twist.angular.z
 
-            speed = hypot(
-                velocity.linear.x,
-                velocity.linear.y,
-            )
-
-            angular_speed = velocity.angular.z
-
-            if not all(isfinite(v) for v in (x, y, heading, speed, angular_speed)):
+            if not all(isfinite(v) for v in (x, y, heading, angular_speed)):
                 return
 
             # 当前系统时间，仅用于显示。
@@ -363,11 +364,27 @@ if ROS_AVAILABLE:
                 position_y=round(y, 3),
                 heading=round(heading, 2),
 
-                speed=round(speed, 3),
                 angular_speed=round(angular_speed, 3),
 
                 last_odom_time=timestamp,
                 last_odom_monotonic=receive_time,
+            )
+
+        def velocity_callback(self, msg: Vector3Stamped):
+            """MGX23 手册 §2.2：x/y/z 为北/东/下速度，单位 m/s。"""
+            stamp_ns = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+            age = (self.get_clock().now().nanoseconds - stamp_ns) / 1e9
+            previous = robot_state.snapshot()["last_velocity_stamp"]
+            if (stamp_ns <= 0 or not -0.05 <= age < VELOCITY_TIMEOUT_SECONDS
+                    or (previous is not None and stamp_ns <= previous)):
+                return
+            north, east, down = msg.vector.x, msg.vector.y, msg.vector.z
+            valid = all(isfinite(v) for v in (north, east, down)) and isfinite(hypot(north, east))
+            robot_state.update(
+                speed=hypot(north, east) if valid else None,
+                velocity_ned={"north": north, "east": east, "down": down} if valid else None,
+                last_velocity_stamp=stamp_ns,
+                last_velocity_monotonic=monotonic() - max(0.0, age) if valid else None,
             )
 
         # ====================================================
@@ -716,6 +733,10 @@ def get_robot_status():
         data_age is not None
         and data_age < ODOM_TIMEOUT_SECONDS
     )
+    last_velocity = data["last_velocity_monotonic"]
+    velocity_age = monotonic() - last_velocity if last_velocity is not None else None
+    velocity_fresh = velocity_age is not None and velocity_age < VELOCITY_TIMEOUT_SECONDS
+    speed = data["speed"] if velocity_fresh else None
 
     # --------------------------------------------------------
     # 14.2 判断机器人运行模式
@@ -725,8 +746,8 @@ def get_robot_status():
         mode = "offline"
 
     elif (
-        data["speed"] is not None
-        and data["speed"] > 0.05
+        speed is not None
+        and speed > 0.05
     ):
         mode = "running"
 
@@ -766,7 +787,10 @@ def get_robot_status():
         "online": online,
         "mode": mode,
 
-        "speed": data["speed"],
+        "speed": speed,
+        "speed_source": "mgx23_ned" if velocity_fresh else None,
+        "velocity_ned": data["velocity_ned"] if velocity_fresh else None,
+        "velocity_age_seconds": round(velocity_age, 3) if velocity_age is not None else None,
         "heading": data["heading"],
 
         # 尚未接入电池数据，不伪造电量

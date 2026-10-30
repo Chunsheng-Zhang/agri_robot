@@ -3,9 +3,9 @@ import { computed } from 'vue'
 import { MapLocation, Clock, Odometer, DataLine } from '@element-plus/icons-vue'
 import { useRealtime, numberText } from '../../composables/useRealtime'
 
-const { robot, poseFresh, robotFresh } = useRealtime()
+const { robot, poseFresh, velocityFresh, robotFresh } = useRealtime()
 const statistics = computed(() => [
-  { title: '当前观测速度', value: numberText(poseFresh.value ? robot.value?.speed : null), unit: 'm/s', icon: Odometer },
+  { title: 'MGX23 水平速度', value: velocityFresh.value && robot.value?.speed != null ? numberText(robot.value.speed) : '未更新', unit: 'm/s', icon: Odometer },
   { title: '当前观测角速度', value: numberText(poseFresh.value ? robot.value?.angular_speed : null, 3), unit: 'rad/s', icon: Clock },
   { title: '参考路径点数', value: robotFresh.value ? String(robot.value?.reference_path_points ?? 0) : '--', unit: '点', icon: MapLocation },
   { title: '已记录轨迹点数', value: robotFresh.value ? String(robot.value?.tracked_path_points ?? 0) : '--', unit: '点', icon: DataLine },

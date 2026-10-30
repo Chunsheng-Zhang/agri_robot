@@ -16,6 +16,8 @@ export interface RobotStatusResponse {
   online: boolean
   mode: string
   speed: number | null
+  speed_source?: 'mgx23_ned' | null
+  velocity_age_seconds?: number | null
   heading: number | null
   battery: number | null
   battery_voltage?: number | null

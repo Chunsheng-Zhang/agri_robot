@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { Cpu, Odometer, Compass, Lightning, Location } from '@element-plus/icons-vue'
 import { useRealtime, modeText, numberText } from '../../composables/useRealtime'
 
-const { robot: state, devices, poseFresh, robotFresh, safetyFresh, isFresh, refresh } = useRealtime()
+const { robot: state, devices, poseFresh, velocityFresh, robotFresh, safetyFresh, isFresh, refresh } = useRealtime()
 const robot = computed(() => {
   const pose = poseFresh.value ? state.value : null
   const gnss = isFresh(devices.value?.gnss) ? devices.value?.gnss : null
@@ -11,7 +11,8 @@ const robot = computed(() => {
     name: state.value?.robot_id ?? '农业机器人',
     online: poseFresh.value,
     mode: safetyFresh.value ? modeText(devices.value?.safety.owner) : '控制模式未知',
-    speed: pose?.speed, heading: pose?.heading, angularSpeed: pose?.angular_speed,
+    speed: velocityFresh.value ? state.value?.speed : null,
+    heading: pose?.heading, angularSpeed: pose?.angular_speed,
     battery: robotFresh.value ? state.value?.battery : null,
     voltage: robotFresh.value ? state.value?.battery_voltage : null,
     longitude: gnss?.longitude, latitude: gnss?.latitude,
@@ -79,10 +80,10 @@ defineExpose({ refreshData: refresh })
       <div class="status-item">
         <div class="status-label">
           <el-icon><Odometer /></el-icon>
-          行驶速度
+          行驶速度（MGX23 水平速度）
         </div>
         <div class="status-value">
-          {{ numberText(robot.speed) }}
+          {{ robot.speed == null ? '未更新' : numberText(robot.speed) }}
           <span class="status-unit">m/s</span>
         </div>
       </div>

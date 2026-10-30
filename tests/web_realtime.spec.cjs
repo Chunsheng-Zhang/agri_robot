@@ -11,7 +11,7 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('U
     const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } })
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
-    let live = false, disconnected = false, locked = false, camera = true, badVideo = false, frame = 'map', x = 12.34
+    let live = false, velocityLive = true, disconnected = false, locked = false, camera = true, badVideo = false, frame = 'map', x = 12.34
     const fresh = () => ({ fresh: live, age_seconds: live ? 0.05 : null })
     await page.route('**/api/**', async route => {
       const path = new URL(route.request().url()).pathname
@@ -21,7 +21,9 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('U
       if (path === '/api/workspace') return json({ origin: { latitude: 31, longitude: 118, epsg: 32650 },
         origin_source: 'active_ros', defaults: { waypoint: {}, coverage: {} }, missions: [], runs: [], active_run: null, events: [] })
       if (path === '/api/robot/status') return json({ robot_id: 'test_robot', ros_connected: live, online: live,
-        speed: 0.37, angular_speed: -0.12, heading: 45, battery: null, position_x: x, position_y: 3.21,
+        speed: velocityLive ? 0.37 : null, speed_source: velocityLive ? 'mgx23_ned' : null,
+        velocity_age_seconds: velocityLive ? 0.05 : 2,
+        angular_speed: -0.12, heading: 45, battery: null, position_x: x, position_y: 3.21,
         odom_age_seconds: live ? 0.05 : null, last_odom_time: new Date().toISOString(),
         reference_path_points: 3, tracked_path_points: 2 })
       if (path === '/api/devices') return json({
@@ -53,6 +55,12 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('U
     await wait(() => document.body.innerText.includes('118.98765432'))
     await wait(() => document.querySelector('.field-card svg g') !== null)
     assert((await page.locator('.robot-card').innerText()).includes('0.37'))
+    assert((await page.locator('.robot-card').innerText()).includes('MGX23 水平速度'))
+    velocityLive = false
+    await wait(() => !document.querySelector('.robot-card').innerText.includes('0.37'))
+    assert((await page.locator('.robot-card').innerText()).includes('未更新'))
+    velocityLive = true
+    await wait(() => document.querySelector('.robot-card').innerText.includes('0.37'))
     assert((await page.locator('.safety-panel').innerText()).includes('2.34'))
     assert((await page.locator('.task-section').innerText()).includes('运行中'))
     await wait(() => document.querySelector('.video-frame img')?.naturalWidth > 0)
