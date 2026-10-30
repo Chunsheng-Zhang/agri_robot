@@ -12,6 +12,7 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('U
     const errors = []
     page.on('pageerror', error => errors.push(error.message))
     let live = false, velocityLive = true, disconnected = false, locked = false, camera = true, badVideo = false, frame = 'map', x = 12.34
+    let lidarEnabled = false, rejectLidarChange = false
     const fresh = () => ({ fresh: live, age_seconds: live ? 0.05 : null })
     await page.route('**/api/**', async route => {
       const path = new URL(route.request().url()).pathname
@@ -26,9 +27,15 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('U
         angular_speed: -0.12, heading: 45, battery: null, position_x: x, position_y: 3.21,
         odom_age_seconds: live ? 0.05 : null, last_odom_time: new Date().toISOString(),
         reference_path_points: 3, tracked_path_points: 2 })
+      if (path === '/api/robot/lidar-protection') {
+        if (rejectLidarChange) return route.fulfill({ status: 409, json: { detail: '测试雷达切换被拒绝' } })
+        lidarEnabled = route.request().postDataJSON().enabled
+        return json({ success: true, enabled: lidarEnabled, message: lidarEnabled ? '雷达障碍停车已启用' : '雷达障碍停车已关闭' })
+      }
       if (path === '/api/devices') return json({
         safety: { ...fresh(), mode: 'coverage', mode_revision: 1, owner: 'tracking', emergency_stop: locked, obstacle_stop: false,
-          motion_inhibited: locked, localization_valid: true, joy_connected: true, lidar_connected: true, reason: 'test feedback' },
+          motion_inhibited: locked, localization_valid: true, joy_connected: true, lidar_connected: true,
+          lidar_required: lidarEnabled, reason: 'test feedback' },
         obstacles: { ...fresh(), valid: true, global_range: 1.45, front_distance: 2.34, rear_distance: 3.45, front_valid: true, rear_valid: true },
         manual: { ...fresh(), connected: true },
         camera: { ...fresh(), connected: camera, width: 640, height: 480, encoding: 'rgb8' },
@@ -49,11 +56,23 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('U
     const wait = predicate => page.waitForFunction(predicate, null, { timeout: 12000 })
     await page.goto(base)
     await wait(() => document.body.innerText.includes('安全状态未知'))
+    const lidarControl = page.getByRole('checkbox', { name: '启用雷达障碍停车', exact: true })
+    assert(await lidarControl.isDisabled())
     assert(await page.getByRole('button', { name: '解除急停', exact: true }).first().isDisabled())
     assert.equal(await page.locator('.field-card svg g').count(), 0)
     live = true
     await wait(() => document.body.innerText.includes('118.98765432'))
     await wait(() => document.querySelector('.field-card svg g') !== null)
+    assert(!(await lidarControl.isChecked()))
+    await lidarControl.check()
+    await wait(() => document.querySelector('.lidar-control input')?.checked === true)
+    rejectLidarChange = true
+    await lidarControl.uncheck()
+    await wait(() => document.body.innerText.includes('测试雷达切换被拒绝'))
+    await wait(() => document.querySelector('.lidar-control input')?.checked === true)
+    rejectLidarChange = false
+    await lidarControl.uncheck()
+    await wait(() => document.querySelector('.lidar-control input')?.checked === false)
     assert((await page.locator('.robot-card').innerText()).includes('0.37'))
     assert((await page.locator('.robot-card').innerText()).includes('MGX23 水平速度'))
     velocityLive = false
@@ -82,6 +101,7 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('U
     disconnected = true
     await wait(() => document.body.innerText.includes('安全状态未知') && !document.body.innerText.includes('118.98765432'))
     assert(await page.getByRole('button', { name: '解除急停', exact: true }).first().isDisabled())
+    assert(await lidarControl.isDisabled())
     assert.equal(await page.locator('.field-card svg g').count(), 0)
     assert.equal(await page.locator('.video-frame img').count(), 0)
     assert(!(await page.locator('.robot-card').innerText()).includes('15.67'))

@@ -46,6 +46,15 @@ def test_web_modes_missions_planning_recordings_and_deadman():
         until(lambda: not client.get('/api/devices').json()['safety']['emergency_stop'])
         post(f'/api/missions/{waypoint["id"]}/start')
         until(lambda: system.waypoint.state == 'RUNNING' and system.state['v'] > 0)
+        # Policy changes stop a real task, without resetting estop or resuming it.
+        post('/api/robot/lidar-protection', {'enabled': True})
+        until(lambda: system.waypoint.state == 'FAULT' and system.state['v'] == 0)
+        assert not system.safety.gate.owner and system.safety.lidar_required
+        post('/api/robot/lidar-protection', {'enabled': False})
+        until(lambda: system.waypoint.mode_revision == system.safety.mode_revision)
+        assert system.waypoint.state == 'FAULT' and system.state['v'] == 0
+        post(f'/api/missions/{waypoint["id"]}/start')
+        until(lambda: system.waypoint.state == 'RUNNING' and system.state['v'] > 0)
         post('/api/tasks/waypoint/pause')
         until(lambda: system.state['v'] == 0)
         post('/api/tasks/waypoint/resume')

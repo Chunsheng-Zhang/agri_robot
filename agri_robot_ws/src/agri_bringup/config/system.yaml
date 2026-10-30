@@ -81,7 +81,7 @@ safety:
     max_path_error: 2.0
     publish_rate: 20.0
     max_lateral_speed: 1.0
-    require_lidar: true
+    require_lidar: false  # Enable at runtime with the Web lidar obstacle-stop checkbox.
     scan_timeout: 0.5
     stop_distance: 0.8
     resume_distance: 1.2

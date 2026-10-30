@@ -34,7 +34,7 @@ class Safety(Node):
         defaults = {'max_linear_speed': 1.0, 'max_lateral_speed': 1.0,
                     'max_angular_speed': 5.0, 'command_timeout': 0.25,
                     'sensor_timeout': 0.5, 'max_path_error': 2.0, 'publish_rate': 20.0,
-                    'require_lidar': True, 'require_joy': False, 'allow_lateral': False,
+                    'require_lidar': False, 'require_joy': False, 'allow_lateral': False,
                     'joy_timeout': 0.5, 'joy_estop_button': 6, 'scan_timeout': 0.5,
                     'stop_distance': 0.8, 'resume_distance': 1.2, 'clear_duration': 1.0,
                     'laser_frame': 'laser', 'laser_x': 0.0435, 'laser_y': 0.00005258,
@@ -46,6 +46,8 @@ class Safety(Node):
             self.declare_parameter(name, value, ParameterDescriptor(read_only=True,
                 description='Physical safety configuration; change YAML and restart the core.'))
         self.get = lambda name: self.get_parameter(name).value
+        # require_lidar is the startup policy; the service controls the live policy.
+        self.lidar_required = self.get('require_lidar')
         for name in ('sensor_timeout', 'joy_timeout', 'scan_timeout', 'publish_rate'):
             finite_positive(self.get(name), name)
         if not isinstance(self.get('joy_estop_button'), int) or self.get('joy_estop_button') < 0:
@@ -89,6 +91,7 @@ class Safety(Node):
         self.create_subscription(Vector3Stamped, '/tracking/error', self.on_error, 1)
         self.create_service(SetBool, '/safety/emergency_stop', self.stop_service)
         self.create_service(Trigger, '/safety/obstacle/reset', self.reset_obstacle)
+        self.create_service(SetBool, '/safety/lidar_protection', self.set_lidar_protection)
         self.create_service(AcquireControl, '/safety/acquire_control', self.acquire_control)
         for mode in ('base', 'waypoint', 'coverage'):
             self.create_service(Trigger, f'/system/mode/{mode}',
@@ -255,6 +258,24 @@ class Safety(Node):
         self.tick()
         return response
 
+    def set_lidar_protection(self, request, response):
+        enabled = request.data
+        if enabled != self.lidar_required:
+            # A policy change must never replay a previous motion command or lease.
+            self.gate.revoke('Lidar obstacle protection changed; explicit start required')
+            self.control_lease = None
+            self.mode_revision += 1  # Reject queued acquisition requests from the old policy.
+            self.pub.publish(Twist())
+            self.lidar_required = enabled
+            if not enabled:
+                self.obstacle.active, self.obstacle.reason, self.obstacle.clear_since = False, '', None
+            self.event('LIDAR_PROTECTION_CHANGED', 'enabled' if enabled else 'disabled')
+        response.success = True
+        response.message = ('雷达障碍停车已启用' if self.lidar_ok() else
+                            '雷达障碍停车已启用，等待有效雷达数据，当前禁止取得运动控制权') if enabled else '雷达障碍停车已关闭'
+        self.tick()
+        return response
+
     def select_mode(self, mode, response):
         if mode != self.system_mode:
             self.gate.revoke('Work mode changed; explicit start required')
@@ -288,7 +309,7 @@ class Safety(Node):
             response.success, response.message = False, 'Select the matching work mode first'
             return response
         health = self.healthy(source)
-        can_move = (health and not self.obstacle.active and (not self.get('require_lidar') or self.lidar_ok()))
+        can_move = (health and not self.obstacle.active and (not self.lidar_required or self.lidar_ok()))
         if source == 'manual' and request.data:
             can_move = can_move and self.joy_neutral and not self.joy_pressed
             if can_move and not self.gate.emergency_stop and self.gate.owner in ('waypoint', 'tracking', 'web'):
@@ -307,7 +328,7 @@ class Safety(Node):
             if not self.gate.emergency_stop:
                 self.event('EMERGENCY_STOP', 'Joystick/control heartbeat lost')
                 self.gate.stop(True, True)
-        if self.get('require_lidar') and self.gate.owner and not self.obstacle.active:
+        if self.lidar_required and self.gate.owner and not self.obstacle.active:
             sample = self.gate.samples.get(self.gate.owner)
             direction = (sample[0], sample[3], sample[1]) if sample else (0.0, 0.0, 0.0)
             if not self.lidar_ok():
@@ -342,7 +363,7 @@ class Safety(Node):
                 else (self.obstacle.reason if self.obstacle.active else self.gate.reason),
             'linear': msg.linear.x, 'lateral': msg.linear.y, 'angular': msg.angular.z,
             'localization_valid': self.localization_ok(), 'joy_connected': self.joystick_ok(),
-            'lidar_connected': self.lidar_ok(), 'lidar_required': self.get('require_lidar'),
+            'lidar_connected': self.lidar_ok(), 'lidar_required': self.lidar_required,
             'allow_lateral': self.get('allow_lateral')}, allow_nan=False)))
         self.estop_pub.publish(Bool(data=self.gate.emergency_stop))
         self.obstacle_pub.publish(Bool(data=self.obstacle.active))

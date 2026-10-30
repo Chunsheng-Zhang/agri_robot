@@ -4,6 +4,7 @@ import copy
 import json
 import math
 import os
+from pydantic import BaseModel, StrictBool
 from collections import deque
 from threading import Event, Lock
 from time import monotonic
@@ -65,6 +66,10 @@ class DeviceCache:
 device_cache = DeviceCache()
 
 
+class LidarProtectionRequest(BaseModel):
+    enabled: StrictBool
+
+
 def install_ros_devices(node):
     from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy, qos_profile_sensor_data
     from sensor_msgs.msg import NavSatFix, LaserScan
@@ -113,6 +118,7 @@ def install_ros_devices(node):
                                          'fix_status': msg.status.status})
     node.create_subscription(NavSatFix, '/mgx23/position', gnss, qos_profile_sensor_data)
     node.device_service_clients = {'/safety/emergency_stop': node.create_client(SetBool, '/safety/emergency_stop'),
+                                    '/safety/lidar_protection': node.create_client(SetBool, '/safety/lidar_protection'),
                                     '/safety/obstacle/reset': node.create_client(Trigger, '/safety/obstacle/reset')}
     for source in ('waypoint', 'tracking'):
         for action in ('start', 'pause', 'resume', 'cancel'):
@@ -172,6 +178,13 @@ def install_routes(app, require_bridge):
     @router.post('/api/robot/obstacle-stop/reset')
     def reset_obstacle():
         return service_call(require_bridge().node, '/safety/obstacle/reset')
+
+    @router.post('/api/robot/lidar-protection')
+    def lidar_protection(body: LidarProtectionRequest):
+        result = service_call(require_bridge().node, '/safety/lidar_protection', active=body.enabled)
+        if hasattr(app.state, 'workspace'):
+            app.state.workspace.event('LIDAR_PROTECTION_CHANGED', enabled=body.enabled)
+        return {**result, 'enabled': body.enabled}
 
     @router.post('/api/tasks/{source}/{action}')
     def task(source: str, action: str):

@@ -44,11 +44,11 @@ def test_vendor_launch_selection_without_starting_devices(tmp_path, monkeypatch)
     assert description.entities  # XML parsed successfully, no node executed.
     assert 'astro_pro_plus.launch.xml' in str(include.launch_description_source.location)
     config = yaml.safe_load((root / 'agri_robot_ws/src/agri_bringup/config/system.yaml').read_text())
-    assert config['safety']['ros__parameters']['require_lidar']
+    assert config['safety']['ros__parameters']['require_lidar'] is False
     assert config['joy_adapter']['ros__parameters']['joy_profile'] == 'jetson'
 
     # Disabling a locally launched driver must be independent of the safety
-    # requirement: an external scanner may still satisfy the default policy.
+    # requirement: explicit enabled policy may use an externally launched scanner.
     definitions = []
     def record_node(**kwargs):
         definitions.append(kwargs)
@@ -61,6 +61,13 @@ def test_vendor_launch_selection_without_starting_devices(tmp_path, monkeypatch)
     assert safety['ros_arguments'][:2] == ['--params-file', context.launch_configurations['params_file']]
     assert safety['ros_arguments'][-2:] == ['-p', 'safety:require_lidar:=false']
     assert 'parameters' not in safety  # No later YAML may overwrite the CLI policy.
+
+    definitions.clear()
+    context.launch_configurations['require_lidar'] = 'true'
+    module.nodes(context)
+    safety = next(node for node in definitions if node['package'] == 'agri_safety')
+    assert safety['ros_arguments'][-2:] == ['-p', 'safety:require_lidar:=true']
+    assert not any(node['package'] == 'ydlidar_ros2_driver' for node in definitions)
 
     definitions.clear()
     context.launch_configurations['require_lidar'] = 'config'

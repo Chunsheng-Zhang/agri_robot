@@ -38,6 +38,8 @@ export const missionAction = (id: string, action: 'plan' | 'start') => request(`
 export const taskAction = (source: 'waypoint' | 'tracking', action: 'pause' | 'resume' | 'cancel') => request(`/api/tasks/${source}/${action}`)
 export const cancelPlanning = () => request('/api/planning/cancel')
 export const resetObstacle = () => request('/api/robot/obstacle-stop/reset')
+export const setLidarProtection = (enabled: boolean) => request<{ success: boolean; enabled: boolean; message: string }>(
+  '/api/robot/lidar-protection', { enabled })
 export const runDownloadUrl = (id: string) => apiUrl(`/api/runs/${id}/download`)
 export const armManual = () => request<{ token: string; server_time: number; limits: { linear: number; angular: number } }>('/api/control/arm')
 export const stopManual = (token: string) => request('/api/control/stop', { token })
