@@ -25,13 +25,13 @@ const router = createRouter({
           path: 'tasks',
           name: 'tasks',
           component: () => import('../views/TasksView.vue'),
-          meta: { title: '任务管理' },
+          meta: { title: '多点导航' },
         },
         {
           path: 'planning',
           name: 'planning',
           component: () => import('../views/PlanningView.vue'),
-          meta: { title: '路径规划' },
+          meta: { title: '全覆盖规划与跟踪' },
         },
         {
           path: 'devices',

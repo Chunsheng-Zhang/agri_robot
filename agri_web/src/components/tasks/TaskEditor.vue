@@ -137,7 +137,7 @@ async function importFile(event: Event) {
     if (file.size > 2 * 1024 * 1024) throw new Error('文件超过 2 MB，请减少输入点数')
     const text = await file.text()
     if (file.name.endsWith('.csv')) {
-      if (props.kind !== 'waypoint') throw new Error('CSV 航点请在多点导航类型中导入')
+      if (props.kind !== 'waypoint') throw new Error('CSV 航点请在“多点导航”栏目中导入')
       const [header, ...lines] = text.trim().split(/\r?\n/), columns = header!.split(',').map(p => p.trim())
       const lon = columns.indexOf('longitude'), lat = columns.indexOf('latitude'), dwell = columns.indexOf('dwell_time')
       if (lon < 0 || lat < 0) throw new Error('CSV 表头需要 longitude,latitude，可选 dwell_time')
@@ -145,7 +145,7 @@ async function importFile(event: Event) {
     } else {
       const data = JSON.parse(text), task = data.task || data
       if (task.mode) {
-        if (task.mode !== props.kind) throw new Error('请先选择与导入文件一致的任务类型')
+        if (task.mode !== props.kind) throw new Error('任务类型与当前栏目不符，请到对应的多点导航或全覆盖栏目导入')
         name.value = task.name; parameters.value = { ...copy(props.defaults), ...task.parameters }
         rows.value = toRows(task.waypoints || []); rings.value = loadBoundary(task.boundary)
         origin.value = data.projection || task.projection
@@ -168,14 +168,14 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
 <template>
   <div class="mission-editor">
     <el-card shadow="never">
-      <template #header><div class="editor-heading"><strong>{{ id ? '编辑任务' : '创建任务' }}</strong><el-tag :type="dirty ? 'warning' : 'success'">{{ dirty ? '有未保存内容' : `已保存 · v${revision}` }}</el-tag></div></template>
+      <template #header><div class="editor-heading"><strong>{{ id ? '编辑' : '创建' }}{{ kind === 'waypoint' ? '多点导航任务' : '覆盖任务' }}</strong><el-tag :type="dirty ? 'warning' : 'success'">{{ dirty ? '有未保存内容' : `已保存 · v${revision}` }}</el-tag></div></template>
       <el-form label-position="top" :disabled="busy || executingThis">
         <el-form-item label="任务名称"><el-input v-model="name" maxlength="80" placeholder="例如：东侧试验田第一轮" /></el-form-item>
         <div class="editor-toolbar">
           <el-button @click="editableRows.push(blank())">添加{{ kind === 'waypoint' ? '目标点' : '角点' }}</el-button>
           <el-button :disabled="!isFresh(devices?.gnss)" @click="capture">采集当前 RTK 点</el-button>
           <el-button @click="fileInput?.click()">导入文件</el-button><el-button @click="exportTask">导出 JSON</el-button>
-          <input ref="fileInput" type="file" accept=".json,.geojson,.csv" hidden @change="importFile" />
+          <input ref="fileInput" type="file" :accept="kind === 'waypoint' ? '.json,.csv' : '.json,.geojson'" hidden @change="importFile" />
         </div>
         <div v-if="kind === 'coverage'" class="ring-select">
           <el-select v-model="ringIndex" aria-label="边界环"><el-option v-for="(_, index) in rings" :key="index" :value="index" :label="index === 0 ? '农田外边界' : `内部禁入区域 ${index}`" /></el-select>
@@ -200,7 +200,7 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
         </div>
         <el-alert v-if="error" :title="error" type="warning" :closable="false" />
         <div class="editor-toolbar actions">
-          <el-button :loading="previewBusy" @click="buildPreview()">检查边界 / 航点</el-button>
+          <el-button :loading="previewBusy" @click="buildPreview()">{{ kind === 'waypoint' ? '检查目标点' : '检查地块边界' }}</el-button>
           <el-button type="primary" :loading="busy" @click="save">保存任务</el-button>
           <el-button v-if="kind === 'coverage'" type="success" plain :disabled="dirty || busy || !controlsIdle || devices?.safety.mode !== 'coverage'" @click="operate('plan')">生成覆盖路径</el-button>
           <el-button type="success" :disabled="dirty || busy || !controlsIdle || devices?.safety.mode !== kind || devices?.safety.motion_inhibited !== false || devices?.safety.localization_valid !== true || (kind === 'coverage' && !planReady)" @click="operate('start')">{{ kind === 'coverage' ? '前往起点并开始覆盖' : '开始多点导航' }}</el-button>

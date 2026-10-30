@@ -8,10 +8,14 @@ import type { WorkMode } from '../api/workspace'
 
 const { devices, safetyFresh, refresh } = useRealtime()
 const { context, refresh: refreshWorkspace } = useWorkspace()
+const props = withDefaults(defineProps<{ modes?: readonly WorkMode[] }>(), {
+  modes: () => ['base', 'waypoint', 'coverage'],
+})
+const availableModes = computed(() => props.modes.map(mode => ({ mode, label: modeLabels[mode] })))
 const busy = ref(false)
 const current = computed(() => safetyFresh.value ? devices.value?.safety.mode : undefined)
 async function change(mode: WorkMode) {
-  if (busy.value || current.value === mode) return
+  if (busy.value || current.value === mode || !props.modes.includes(mode) || !safetyFresh.value) return
   try {
     if (devices.value?.safety.owner || ['ACQUIRING', 'RUNNING', 'PAUSED', 'PLANNING'].includes(context.value?.active_run?.state || '')) {
       await ElMessageBox.confirm('切换将停止并结束当前任务。新模式保持待命，不会自动行驶。', '切换工作模式', {
@@ -31,7 +35,7 @@ async function change(mode: WorkMode) {
     <div><span class="eyebrow">运行模式</span><strong>{{ current ? modeLabels[current] : '等待 ROS 核心' }}</strong><span class="mode-note">切换后待命，任务需明确开始</span></div>
     <div class="mode-buttons">
       <el-tag v-if="context?.synthetic" type="warning">软件联调 · 模拟定位</el-tag>
-      <el-button v-for="(label, mode) in modeLabels" :key="mode" :type="current === mode ? 'success' : 'default'"
+      <el-button v-for="{ label, mode } in availableModes" :key="mode" :type="current === mode ? 'success' : 'default'"
         :plain="current !== mode" :disabled="busy || !safetyFresh" :loading="busy && current !== mode" @click="change(mode)">{{ label }}</el-button>
     </div>
   </section>

@@ -4,16 +4,23 @@ import { ElMessage } from 'element-plus'
 import { useRealtime, taskText, numberText } from '../../composables/useRealtime'
 import { useWorkspace } from '../../composables/useWorkspace'
 import { taskAction, cancelPlanning } from '../../api/workspace'
+import type { MissionMode } from '../../api/workspace'
 
+const props = defineProps<{ kind: MissionMode }>()
 const { devices, safetyFresh, isFresh, refresh } = useRealtime()
 const { context, refresh: refreshWorkspace } = useWorkspace()
 const busy = ref(false)
-const source = computed(() => devices.value?.safety.mode === 'waypoint' ? 'waypoint' : 'tracking')
+const source = computed(() => props.kind === 'waypoint' ? 'waypoint' : 'tracking')
+const activeRun = computed(() => context.value?.active_run?.mode === props.kind ? context.value.active_run : undefined)
 const status = computed(() => devices.value?.[source.value])
 const state = computed(() => isFresh(status.value) ? status.value?.state : undefined)
-const planning = computed(() => isFresh(devices.value?.planning) && devices.value?.planning.state === 'PLANNING')
-const displayState = computed(() => planning.value ? 'PLANNING' : context.value?.active_run?.stage === 'planning'
-  ? context.value.active_run.state : state.value)
+const planning = computed(() => props.kind === 'coverage' && isFresh(devices.value?.planning) && devices.value?.planning.state === 'PLANNING')
+const displayState = computed(() => planning.value ? 'PLANNING' : activeRun.value?.stage === 'planning'
+  ? activeRun.value.state : state.value)
+const canPause = computed(() => !busy.value && state.value === 'RUNNING')
+const canResume = computed(() => !busy.value && state.value === 'PAUSED' && safetyFresh.value
+  && devices.value?.safety.mode === props.kind && devices.value?.safety.motion_inhibited === false)
+const canCancel = computed(() => !busy.value && ['RUNNING', 'PAUSED', 'ACQUIRING'].includes(state.value || ''))
 const coveragePhase = computed(() => source.value === 'tracking' && isFresh(status.value)
   && ['RUNNING', 'PAUSED', 'ACQUIRING'].includes(state.value || '') ? status.value?.phase : undefined)
 const progress = computed(() => {
@@ -24,6 +31,8 @@ const progress = computed(() => {
   return null
 })
 async function operate(action: 'pause' | 'resume' | 'cancel' | 'cancel_plan') {
+  if (busy.value || (action === 'pause' && !canPause.value) || (action === 'resume' && !canResume.value)
+    || (action === 'cancel' && !canCancel.value) || (action === 'cancel_plan' && !planning.value)) return
   busy.value = true
   try {
     if (action === 'cancel_plan') await cancelPlanning()
@@ -35,15 +44,15 @@ async function operate(action: 'pause' | 'resume' | 'cancel' | 'cancel_plan') {
 </script>
 <template>
   <div class="task-controls">
-    <div><strong>{{ context?.active_run?.name || '当前任务' }}<span v-if="context?.active_run"> · v{{ context.active_run.mission_revision }}</span></strong><el-tag type="info">{{ taskText(displayState) }}</el-tag><small>{{ context?.active_run?.reason || status?.reason || '任务开始后在此查看反馈' }}</small><small v-if="state && state !== 'IDLE'">用时 {{ numberText(status?.elapsed_seconds, 1) }} s（含暂停）<span v-if="progress !== null"> · {{ source === 'tracking' ? '路径任务进度' : '目标点完成进度' }} {{ numberText(progress, 1) }}%</span></small></div>
+    <div><strong>{{ activeRun?.name || (kind === 'waypoint' ? '多点导航任务' : '覆盖作业任务') }}<span v-if="activeRun"> · v{{ activeRun.mission_revision }}</span></strong><el-tag type="info">{{ taskText(displayState) }}</el-tag><small>{{ activeRun?.reason || status?.reason || '任务开始后在此查看反馈' }}</small><small v-if="state && state !== 'IDLE'">用时 {{ numberText(status?.elapsed_seconds, 1) }} s（含暂停）<span v-if="progress !== null"> · {{ source === 'tracking' ? '路径任务进度' : '目标点完成进度' }} {{ numberText(progress, 1) }}%</span></small></div>
     <div v-if="coveragePhase" class="coverage-phase" role="status">
       <strong>{{ coveragePhase === 'APPROACHING' ? '前往覆盖起点（单点导航）' : '覆盖路径跟踪' }}</strong>
       <small v-if="coveragePhase === 'APPROACHING'">距起点 {{ numberText(status?.approach_distance, 2) }} m · 到达后自动开始覆盖路径跟踪</small>
     </div>
     <div class="buttons">
-      <el-button :disabled="busy || state !== 'RUNNING'" @click="operate('pause')">暂停任务</el-button>
-      <el-button type="success" :disabled="busy || state !== 'PAUSED' || !safetyFresh || devices?.safety.motion_inhibited !== false" @click="operate('resume')">继续任务</el-button>
-      <el-button type="danger" plain :disabled="busy || !['RUNNING', 'PAUSED', 'ACQUIRING'].includes(state || '')" @click="operate('cancel')">取消任务</el-button>
+      <el-button :disabled="!canPause" @click="operate('pause')">暂停任务</el-button>
+      <el-button type="success" :disabled="!canResume" @click="operate('resume')">继续任务</el-button>
+      <el-button type="danger" plain :disabled="!canCancel" @click="operate('cancel')">取消任务</el-button>
       <el-button v-if="planning" type="warning" :disabled="busy" @click="operate('cancel_plan')">取消规划</el-button>
     </div>
   </div>

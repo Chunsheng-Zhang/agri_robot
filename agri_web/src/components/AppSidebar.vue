@@ -17,8 +17,8 @@ const bridgeConnected = computed(() => robotFresh.value && robot.value?.ros_conn
 const menuItems = [
   { path: '/', title: '系统总览', icon: Monitor },
   { path: '/monitor', title: '作业监控', icon: MapLocation },
-  { path: '/tasks', title: '任务管理', icon: List },
-  { path: '/planning', title: '路径规划', icon: Guide },
+  { path: '/tasks', title: '多点导航', icon: List },
+  { path: '/planning', title: '全覆盖规划与跟踪', icon: Guide },
   { path: '/devices', title: '设备管理', icon: Cpu },
   { path: '/collaboration', title: '协同作业', icon: Connection },
   { path: '/settings', title: '系统设置', icon: Setting },

@@ -6,7 +6,6 @@
       <AppHeader />
 
       <el-main class="main-content">
-        <ModeSelector />
         <router-view />
       </el-main>
     </el-container>
@@ -16,7 +15,6 @@
 <script setup lang="ts">
 import AppSidebar from '../components/AppSidebar.vue'
 import AppHeader from '../components/AppHeader.vue'
-import ModeSelector from '../components/ModeSelector.vue'
 </script>
 
 <style>
