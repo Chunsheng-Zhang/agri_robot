@@ -43,6 +43,8 @@
 - 当前平台为 Jetson、ROS 2 Humble。ROS 2 使用 `ros2 run`，不是 ROS 1 的 `rosrun`。
 - 通过 `source scripts/setup_environment.bash` 加载环境。允许只读加载已有厂商安装路径，不借此改动厂商系统安装。
 - 后端使用 `agri_backend/.venv/bin/python`；前端位于 `agri_web/`，通常使用端口 5173，后端端口 8000，视频服务端口 8080。
+- 开机后一键入口为 `bash /home/jetson/agri_robot/scripts/project.bash start`，支持 `status`、`stop`；后台管理核心、后端和网页，不自动解除急停或开始任务，不自动配置系统开机自启。已有外部启动的服务只识别、不接管或终止。
+- 一键入口默认使用可纳入 Git 的 `config/jetson_system.yaml`，核心与后端使用同一文件，保留当前实车参数（多点默认 0.5 m/s、跟踪默认 0.1 m/s）。此入口不依赖历史实验目录；调参时核对实际 profile，不能只改统一 YAML 就声称生效。新原始 MGX23 日志在 `.runtime/mgx23_raw/`，统一服务日志与状态在 `.runtime/project/`。
 - 默认统一配置为 `agri_robot_ws/src/agri_bringup/config/system.yaml`。实际启动可能通过 `params_file:=...` 指向其他配置，必须核对启动参数和实际 ROS 参数，不能只改默认文件就声称已生效。
 - 之前实车启动曾使用 `data/experiments/20261029_outdoor_waypoint_lHbQGV/system.yaml`。该目录不入 Git，新克隆环境不一定存在；不能把它当作所有机器都具备的默认启动文件。
 - 速度或按键调整需同时核对手柄适配器、安全节点以及当前活动 YAML，构建后确认安装文件和运行参数一致。已经归档的 Web 执行目录配置快照不回写。
@@ -108,6 +110,7 @@
 
 - [手柄、雷达和相机接入说明](docs/手柄雷达相机接入说明.md)
 - [Web 任务操作与旧 GUI 功能迁移](docs/Web任务操作与旧GUI功能迁移.md)
+- [项目一键启动](docs/项目一键启动.md)
 - [MGX23 行驶速度修复与验证](docs/2026-10-30_MGX23行驶速度修复与验证.md)
 - [ROS 2 核心使用说明](docs/ROS2核心使用说明.md)
 - [室外五点导航运行与数据说明](docs/2026-10-29_室外五点导航实验运行与数据说明.md)

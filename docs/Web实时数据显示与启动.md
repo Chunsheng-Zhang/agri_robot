@@ -1,5 +1,7 @@
 # Web 实时数据显示与启动
 
+Jetson 日常使用可直接执行 `bash /home/jetson/agri_robot/scripts/project.bash start`，统一后台启动核心、后端和网页。`status` 查看状态，`stop` 停止本脚本启动的服务。固定配置、日志和进程管理说明见 [项目一键启动](项目一键启动.md)；下方保留分终端启动方式，勿与一键入口重复运行。
+
 代码位置：前端 `agri_web/src/views/`，后端 `agri_backend/main.py`、`devices.py`、`workspace.py`。现已提供总览、任务管理、路径规划、作业监控、设备与运行记录页面，只有多机器人协同仍为预留页。完整操作见 [Web 任务操作与旧 GUI 功能迁移](Web任务操作与旧GUI功能迁移.md)。网页查询、模式切换和规划不会自动开始导航任务。
 
 ## 1. 页面现在显示什么
