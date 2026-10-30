@@ -1,6 +1,8 @@
 // Isolated browser validation: ALL /api and /video requests are intercepted.
 // Run with a local Vite server and Playwright installed outside the robot runtime.
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE_PATH || 'playwright')
 const base = process.env.AGRI_WEB_TEST_URL || 'http://127.0.0.1:15173'
 if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('Use a local test server')
@@ -52,7 +54,7 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('U
     })
     await page.route('**/video/**', route => badVideo
       ? route.fulfill({ status: 503 })
-      : route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a0yUAAAAASUVORK5CYII=', 'base64') }))
+      : route.fulfill({ contentType: 'image/jpeg', body: fs.readFileSync(path.join(__dirname, 'fixtures/camera_preview.jpg')) }))
     const wait = predicate => page.waitForFunction(predicate, null, { timeout: 12000 })
     await page.goto(base)
     await wait(() => document.body.innerText.includes('安全状态未知'))
@@ -82,6 +84,8 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('U
     await wait(() => document.querySelector('.robot-card').innerText.includes('0.37'))
     assert((await page.locator('.safety-panel').innerText()).includes('2.34'))
     assert((await page.locator('.task-section').innerText()).includes('运行中'))
+    assert.equal(await page.locator('.video-frame img').count(), 0)
+    await page.getByRole('button', { name: '开启画面', exact: true }).click()
     await wait(() => document.querySelector('.video-frame img')?.naturalWidth > 0)
     x = 15.67
     await wait(() => document.querySelector('.robot-card').innerText.includes('15.67'))
@@ -94,7 +98,7 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw Error('U
     camera = false
     await wait(() => document.querySelector('.video-frame img') === null)
     camera = true; badVideo = true
-    await wait(() => document.body.innerText.includes('视频连接失败，正在重试'))
+    await wait(() => document.body.innerText.includes('画面请求失败（HTTP 503）'))
     frame = 'odom'
     await wait(() => document.body.innerText.includes('路径坐标系不是 map'))
     assert.equal(await page.locator('.field-card polyline').first().getAttribute('points'), '')
