@@ -29,9 +29,10 @@ function pointerDown(event: PointerEvent) {
 }
 function pointerMove(event: PointerEvent) {
   if (!drag) return
-  const rect = (event.currentTarget as SVGSVGElement).getBoundingClientRect()
-  panX.value = drag.px - (event.clientX - drag.x) * width / zoom.value / rect.width
-  panY.value = drag.py - (event.clientY - drag.y) * height / zoom.value / rect.height
+  const matrix = (event.currentTarget as SVGSVGElement).getScreenCTM()
+  if (!matrix?.a || !matrix.d) return
+  panX.value = drag.px - (event.clientX - drag.x) / matrix.a
+  panY.value = drag.py - (event.clientY - drag.y) / matrix.d
 }
 let timer: ReturnType<typeof setInterval> | undefined
 let disposed = false
@@ -138,11 +139,11 @@ defineExpose({ refreshPath })
 </template>
 
 <style scoped>
-.field-card { height: 100%; border-radius: 10px; border-color: #e5eae7; }
+.field-card { min-width: 0; border-radius: 10px; border-color: #e5eae7; }
 .heading, .path-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .heading { font-weight: 600; color: #263b30; }
-.path-canvas { display: grid; place-items: center; min-height: 300px; border: 1px solid #e5eae7; border-radius: 8px; background: #f7faf7; overflow: hidden; margin-top: 12px; }
-.path-canvas svg { width: 100%; max-height: 450px; }
+.path-canvas { display: grid; place-items: center; height: clamp(240px, 38vh, 360px); min-height: 0; border: 1px solid #e5eae7; border-radius: 8px; background: #f7faf7; overflow: hidden; margin-top: 12px; }
+.path-canvas svg { display: block; width: 100%; height: 100%; min-height: 0; }
 .path-canvas svg { touch-action: none; cursor: grab; }
 .empty { padding: 50px 15px; color: #85938a; text-align: center; }
 .path-footer { padding-top: 16px; color: #67776c; font-size: 13px; }
