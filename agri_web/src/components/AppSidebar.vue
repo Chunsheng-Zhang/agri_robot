@@ -67,7 +67,7 @@ const menuItems = [
 
         <div class="connection-status">
           <span class="status-dot" :class="{ disconnected: !poseFresh }"></span>
-          {{ poseFresh ? '机器人位姿在线' : bridgeConnected ? 'ROS 桥接在线' : '后端 / ROS 未连接' }}
+          {{ !robotFresh ? '后端状态未更新' : poseFresh ? '机器人位姿在线' : bridgeConnected ? 'ROS 桥接在线' : 'ROS 桥接未连接' }}
         </div>
 
         <div class="connection-note">{{ error || (poseFresh ? '正在显示实时数据' : '等待有效定位与设备数据') }}</div>

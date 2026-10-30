@@ -7,15 +7,23 @@ const devices = shallowRef<DevicesResponse | null>(null)
 const now = ref(Date.now())
 const robotReceived = ref(0)
 const devicesReceived = ref(0)
-const error = ref('等待后端数据')
-const loading = ref(false)
+const statusError = ref('等待后端数据'), devicesError = ref('')
+const error = computed(() => [...new Set([statusError.value, devicesError.value].filter(Boolean))].join('；'))
+const statusLoading = ref(false), devicesLoading = ref(false)
+const loading = computed(() => statusLoading.value || devicesLoading.value)
+let statusRequest: Promise<void> | undefined, devicesRequest: Promise<void> | undefined
+let generation = 0
 let consumers = 0
 let poll: ReturnType<typeof setInterval> | undefined
 let clock: ReturnType<typeof setInterval> | undefined
 
 const robotFresh = computed(() => robot.value !== null && now.value - robotReceived.value < 2500)
 const devicesFresh = computed(() => devices.value !== null && now.value - devicesReceived.value < 2500)
-const safetyFresh = computed(() => devicesFresh.value && devices.value?.safety.fresh === true)
+function isFresh(value?: Snapshot | null, maxAgeMs = 1000) {
+  return devicesFresh.value && value?.fresh === true && value.age_seconds !== null
+    && value.age_seconds * 1000 + now.value - devicesReceived.value < maxAgeMs
+}
+const safetyFresh = computed(() => isFresh(devices.value?.safety))
 const poseFresh = computed(() => robotFresh.value && robot.value?.ros_connected === true
   && robot.value.online && robot.value.odom_age_seconds !== null
   && robot.value.odom_age_seconds * 1000 + now.value - robotReceived.value < 1000)
@@ -23,30 +31,46 @@ const velocityFresh = computed(() => robotFresh.value && robot.value?.ros_connec
   && robot.value.speed_source === 'mgx23_ned' && robot.value.velocity_age_seconds != null
   && robot.value.velocity_age_seconds * 1000 + now.value - robotReceived.value < 1500)
 
+function refreshStatus() {
+  if (statusRequest) return statusRequest
+  const epoch = generation, started = Date.now()
+  statusLoading.value = true
+  const request = getRobotStatus().then(value => {
+    if (epoch !== generation) return
+    now.value = Date.now(); robot.value = value; robotReceived.value = started; statusError.value = ''
+  }, reason => {
+    if (epoch !== generation) return
+    robot.value = null; robotReceived.value = 0
+    statusError.value = reason instanceof Error ? reason.message : '机器人状态查询失败'
+  }).finally(() => {
+    if (statusRequest === request) { statusRequest = undefined; statusLoading.value = false }
+  })
+  statusRequest = request
+  return request
+}
+
+function refreshDevices() {
+  if (devicesRequest) return devicesRequest
+  const epoch = generation, started = Date.now()
+  devicesLoading.value = true
+  const request = getDevices().then(value => {
+    if (epoch !== generation) return
+    now.value = Date.now(); devices.value = value; devicesReceived.value = started; devicesError.value = ''
+  }, reason => {
+    if (epoch !== generation) return
+    devices.value = null; devicesReceived.value = 0
+    devicesError.value = reason instanceof Error ? reason.message : '设备状态查询失败'
+  }).finally(() => {
+    if (devicesRequest === request) { devicesRequest = undefined; devicesLoading.value = false }
+  })
+  devicesRequest = request
+  return request
+}
+
 async function refresh() {
-  if (loading.value) return
-  loading.value = true
-  const results = await Promise.allSettled([getRobotStatus(), getDevices()])
-  now.value = Date.now()
-  const [status, snapshots] = results
-  if (status.status === 'fulfilled') {
-    robot.value = status.value
-    robotReceived.value = now.value
-  } else {
-    robot.value = null
-    robotReceived.value = 0
-  }
-  if (snapshots.status === 'fulfilled') {
-    devices.value = snapshots.value
-    devicesReceived.value = now.value
-  } else {
-    devices.value = null
-    devicesReceived.value = 0
-  }
-  const failure = results.find(result => result.status === 'rejected')
-  error.value = failure?.status === 'rejected'
-    ? (failure.reason instanceof Error ? failure.reason.message : '后端连接失败') : ''
-  loading.value = false
+  // Independent single-flight streams: a slow scan/device response must not
+  // hold back a healthy robot/ROS response, or queue duplicate requests.
+  await Promise.all([refreshStatus(), refreshDevices()])
 }
 
 function onVisibility() {
@@ -58,8 +82,9 @@ export function useRealtime() {
   onMounted(() => {
     consumers += 1
     if (consumers === 1) {
+      generation += 1
       void refresh()
-      poll = setInterval(() => void refresh(), 1000)
+      poll = setInterval(() => void refresh(), 500)
       clock = setInterval(() => { now.value = Date.now() }, 250)
       document.addEventListener('visibilitychange', onVisibility)
     }
@@ -67,14 +92,18 @@ export function useRealtime() {
   onUnmounted(() => {
     consumers -= 1
     if (consumers === 0) {
+      generation += 1
       clearInterval(poll)
       clearInterval(clock)
       document.removeEventListener('visibilitychange', onVisibility)
       robot.value = null
       devices.value = null
+      robotReceived.value = devicesReceived.value = 0
+      statusRequest = devicesRequest = undefined
+      statusLoading.value = devicesLoading.value = false
+      statusError.value = '等待后端数据'; devicesError.value = ''
     }
   })
-  const isFresh = (value?: Snapshot | null) => devicesFresh.value && value?.fresh === true
   return { robot: readonly(robot), devices: readonly(devices), error: readonly(error),
     loading: readonly(loading), robotFresh, devicesFresh, safetyFresh, poseFresh, velocityFresh, isFresh, refresh }
 }
