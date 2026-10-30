@@ -123,11 +123,11 @@ def test_out_of_order_motion_cannot_replace_newer_stop():
 
 @pytest.mark.parametrize('profile', ['jetson', 'pc'])
 def test_new_buttons_are_unused_in_both_mappings(profile):
-    validate_buttons(profile, 0, 3)
+    validate_buttons(profile, 6, 8)
     with pytest.raises(ValueError):
-        validate_buttons(profile, 7, 3)
+        validate_buttons(profile, 7, 8)
     with pytest.raises(ValueError):
-        validate_buttons(profile, 0, 0)
+        validate_buttons(profile, 6, 6)
 
 
 def test_vendor_pc_publish_arguments_are_ros2_messages():

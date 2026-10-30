@@ -35,7 +35,7 @@ class Safety(Node):
                     'max_angular_speed': 0.6, 'command_timeout': 0.25,
                     'sensor_timeout': 0.5, 'max_path_error': 2.0, 'publish_rate': 20.0,
                     'require_lidar': True, 'require_joy': False, 'allow_lateral': False,
-                    'joy_timeout': 0.5, 'joy_estop_button': 0, 'scan_timeout': 0.5,
+                    'joy_timeout': 0.5, 'joy_estop_button': 6, 'scan_timeout': 0.5,
                     'stop_distance': 0.8, 'resume_distance': 1.2, 'clear_duration': 1.0,
                     'laser_frame': 'laser', 'laser_x': 0.0435, 'laser_y': 0.00005258,
                     'laser_yaw': 0.0, 'body_length': 0.45, 'body_width': 0.35,

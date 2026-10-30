@@ -15,13 +15,13 @@
     laser_z: 0.11
     laser_yaw: 0.0  # Existing 4ROS base_link -> laser mounting convention.
     laser_frame: laser
-    joy_estop_button: 0
+    joy_estop_button: 6
     joy_timeout: 0.5
 
 joy_adapter:
   ros__parameters:
     joy_profile: jetson
-    joy_reset_button: 3
+    joy_reset_button: 8
     reset_hold_seconds: 1.0
     xspeed_limit: 1.0
     yspeed_limit: 1.0

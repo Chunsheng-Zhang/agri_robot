@@ -46,8 +46,8 @@ def make_adapter():
     class JoyAdapter(JoyTeleop):
         def __init__(self):
             super().__init__('joy_adapter')
-            for name, default in {'joy_profile': 'jetson', 'joy_estop_button': 0,
-                                  'joy_reset_button': 3, 'joy_timeout': 0.5,
+            for name, default in {'joy_profile': 'jetson', 'joy_estop_button': 6,
+                                  'joy_reset_button': 8, 'joy_timeout': 0.5,
                                   'reset_hold_seconds': 1.0}.items():
                 self.declare_parameter(name, default)
             self.profile = self.get_parameter('joy_profile').value

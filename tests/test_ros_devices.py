@@ -30,6 +30,8 @@ def test_joystick_scan_camera_and_stop_chain(tmp_path):
     nodes = []
     try:
         safety, adapter, chassis, camera, bench = Safety(), make_adapter(), ChassisAdapter(), CameraStatus(), Node('devices_bench')
+        assert safety.get('joy_estop_button') == adapter.estop_index == 6
+        assert adapter.reset_index == 8
         nodes = [safety, adapter, chassis, camera, bench]
         for node in nodes:
             executor.add_node(node)
@@ -107,6 +109,11 @@ def test_joystick_scan_camera_and_stop_chain(tmp_path):
         arm()
         state['axes'][1], state['axes'][0] = 0.5, 0.3
         until(lambda: state['v'] > 0 and state['vy'] > 0)
+        # The old stop index is again an unused vendor button, not a stop alias.
+        state['buttons'][0] = 1
+        spin(.2)
+        assert not safety.gate.emergency_stop and safety.gate.owner == 'manual'
+        state['buttons'][0] = 0
         # Camera loss reports offline without interrupting motion.
         state['image'] = False
         spin(1.1)
@@ -114,26 +121,40 @@ def test_joystick_scan_camera_and_stop_chain(tmp_path):
         assert state['v'] > 0 and state['vy'] > 0
         state['image'] = True
         # Original auxiliary buttons and gear toggles are still active.
-        state['buttons'][7], state['buttons'][11], state['buttons'][13] = 1, 1, 1
-        until(lambda: bool(lights) and bool(buzzers) and adapter.linear_Gear != 1)
-        gear = adapter.linear_Gear
+        state['buttons'][7], state['buttons'][11], state['buttons'][13], state['buttons'][14] = 1, 1, 1, 1
+        until(lambda: bool(lights) and bool(buzzers) and adapter.linear_Gear != 1 and adapter.angular_Gear != 1)
+        gear, angular_gear = adapter.linear_Gear, adapter.angular_Gear
         spin(0.3)
         assert adapter.linear_Gear == gear  # Autorepeat must not repeatedly change gear.
-        state['buttons'][7], state['buttons'][11], state['buttons'][13] = 0, 0, 0
+        assert adapter.angular_Gear == angular_gear
+        state['buttons'][7], state['buttons'][11], state['buttons'][13], state['buttons'][14] = 0, 0, 0, 0
 
         # Estop release does not unlock. Reset with deflected stick must be rejected.
-        state['buttons'][0] = 1
+        state['buttons'][6] = 1
         until(lambda: safety.gate.emergency_stop and zero())
-        state['buttons'][0] = 0
+        state['buttons'][6] = 0
         spin(0.2)
         assert safety.gate.emergency_stop
         assert not service(SetBool, '/safety/emergency_stop', data=False).success
+        state['buttons'][8] = 1
+        spin(1.1)
+        assert safety.gate.emergency_stop and zero()  # Deflected-stick reset is rejected.
+        state['buttons'][8] = 0
         state['axes'] = [0.0] * 6
         spin(0.15)
-        # The new hold-to-reset button is an explicit request, never a motion enable.
+        # The old reset index no longer unlocks, even when held with neutral sticks.
         state['buttons'][3] = 1
-        until(lambda: not safety.gate.emergency_stop, 3)
+        spin(1.1)
+        assert safety.gate.emergency_stop and zero()
         state['buttons'][3] = 0
+        # Simultaneous stop/reset always keeps stop latched.
+        state['buttons'][6], state['buttons'][8] = 1, 1
+        spin(1.1)
+        assert safety.gate.emergency_stop and zero()
+        state['buttons'][6] = 0
+        # The new hold-to-reset button is an explicit request, never a motion enable.
+        until(lambda: not safety.gate.emergency_stop, 3)
+        state['buttons'][8] = 0
         assert not safety.gate.owner and zero()
         arm()
         state['axes'][1] = 0.5
