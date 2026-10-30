@@ -18,16 +18,17 @@ function fixture(kind) {
     planning: { state: 'IDLE' },
   })
   const context = vue.ref({ active_run: null, missions: [], runs: [] })
-  const safetyFresh = vue.ref(true), calls = [], scope = vue.effectScope()
+  const safetyFresh = vue.ref(true), calls = [], refreshes = [], messages = [], scope = vue.effectScope()
   const modules = {
     vue,
-    'element-plus': { ElMessage: { success() {}, error() {} }, ElMessageBox: { confirm: async () => { calls.push(['confirm']) } } },
+    'element-plus': { ElMessage: { success: message => messages.push(['success', message]), error: message => messages.push(['error', message]) }, ElMessageBox: { confirm: async () => { calls.push(['confirm']) } } },
     '../../composables/useRealtime': { useRealtime: () => ({ devices, safetyFresh, isFresh: status => !!status && !status.stale, refresh: async () => {} }) },
-    '../../composables/useWorkspace': { useWorkspace: () => ({ context, refresh: async () => {}, error: vue.ref(''), loading: vue.ref(false) }) },
+    '../../composables/useWorkspace': { useWorkspace: () => ({ context, refresh: async () => { refreshes.push(1) }, error: vue.ref(''), loading: vue.ref(false) }) },
     '../../api/workspace': {
       taskAction: async (...args) => { calls.push(['task', ...args]) },
       cancelPlanning: async () => { calls.push(['cancel_plan']) },
       selectMode: async mode => { calls.push(['mode', mode]) },
+      deleteRun: async id => { calls.push(['delete', id]); return { success: true, data_preserved: true } },
       modeLabels: { base: '基础待命', waypoint: '多点导航', coverage: '全覆盖作业' },
     },
   }
@@ -42,7 +43,7 @@ function fixture(kind) {
       name => { if (name.endsWith('.vue')) return {}; assert.ok(modules[name], `Unexpected import: ${name}`); return modules[name] },
       {}, () => props, value => value))
   }
-  return { props, devices, context, safetyFresh, calls, load, stop: () => scope.stop() }
+  return { props, devices, context, safetyFresh, calls, refreshes, messages, modules, load, stop: () => scope.stop() }
 }
 const controls = f => f.load('components/tasks/TaskControls.vue', [
   'source', 'activeRun', 'state', 'displayState', 'planning', 'coveragePhase', 'progress',
@@ -163,5 +164,65 @@ test('explicit mode switch still requires confirmation when another task is runn
   const modes = f.load('components/ModeSelector.vue', ['change'])
   await modes.change('coverage')
   assert.deepEqual(f.calls, [['confirm'], ['mode', 'coverage']])
+  f.stop()
+})
+
+function deletion(f, state = 'COMPLETED') {
+  f.props.run = { id: 'run-a', name: 'Test', state, mission_revision: 1, created_at: '2026-10-30T10:00:00+08:00' }
+  return f.load('components/tasks/RunDeleteButton.vue', ['canDelete', 'busy', 'remove'])
+}
+test('record deletion requires confirmation and refreshes only after successful deletion', async () => {
+  const f = fixture('waypoint'), button = deletion(f)
+  await button.remove()
+  assert.deepEqual(f.calls, [['confirm'], ['delete', 'run-a']])
+  assert.equal(f.refreshes.length, 1)
+  assert.match(f.messages[0][1], /原始实验数据已保留/)
+  assert.equal(button.busy.value, false)
+  f.stop()
+})
+test('cancelled confirmation does not delete anything', async () => {
+  const f = fixture('waypoint'), button = deletion(f)
+  f.modules['element-plus'].ElMessageBox.confirm = async () => { throw Error('cancel') }
+  await button.remove()
+  assert.deepEqual(f.calls, [])
+  assert.deepEqual(f.messages, [])
+  assert.equal(f.refreshes.length, 0)
+  assert.equal(button.busy.value, false)
+  f.stop()
+})
+test('unfinished or unknown record states never open deletion confirmation', async () => {
+  const f = fixture('coverage'), button = deletion(f)
+  for (const state of ['PREPARING', 'PLANNING', 'ACQUIRING', 'RUNNING', 'PAUSED', 'WAITING_PATH', 'UNKNOWN']) {
+    f.props.run.state = state
+    assert.equal(button.canDelete.value, false)
+    await button.remove()
+  }
+  assert.deepEqual(f.calls, [])
+  f.stop()
+})
+test('task starting or row changing while confirmation is open invalidates deletion', async () => {
+  const f = fixture('coverage'), button = deletion(f, 'READY')
+  f.modules['element-plus'].ElMessageBox.confirm = async () => { f.props.run.state = 'RUNNING' }
+  await button.remove()
+  f.props.run.state = 'COMPLETED'
+  f.modules['element-plus'].ElMessageBox.confirm = async () => { f.props.run = { ...f.props.run, id: 'run-b' } }
+  await button.remove()
+  assert.deepEqual(f.calls, [])
+  f.stop()
+})
+test('duplicate clicks do not issue two deletes and backend refusal is shown without a success message', async () => {
+  const f = fixture('waypoint'), button = deletion(f)
+  let finish
+  f.modules['element-plus'].ElMessageBox.confirm = () => new Promise(resolve => { finish = resolve })
+  f.modules['../../api/workspace'].deleteRun = async id => { f.calls.push(['delete', id]); throw Error('控制器仍在使用这条记录') }
+  const pending = button.remove()
+  assert.equal(button.busy.value, true)
+  await button.remove()
+  finish()
+  await pending
+  assert.deepEqual(f.calls, [['delete', 'run-a']])
+  assert.deepEqual(f.messages, [['error', '控制器仍在使用这条记录']])
+  assert.equal(button.busy.value, false)
+  assert.equal(f.refreshes.length, 0)
   f.stop()
 })

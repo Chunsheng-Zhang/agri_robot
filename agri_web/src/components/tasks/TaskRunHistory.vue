@@ -4,6 +4,7 @@ import { useWorkspace } from '../../composables/useWorkspace'
 import { taskText } from '../../composables/useRealtime'
 import { runDownloadUrl } from '../../api/workspace'
 import type { MissionMode } from '../../api/workspace'
+import RunDeleteButton from './RunDeleteButton.vue'
 
 const props = defineProps<{ kind: MissionMode }>()
 const { context } = useWorkspace()
@@ -20,8 +21,9 @@ const inProgress = (state: string) => ['PREPARING', 'PLANNING', 'ACQUIRING', 'RU
       <el-table-column label="创建时间" min-width="185"><template #default="{ row }">{{ new Date(row.created_at).toLocaleString('zh-CN') }}</template></el-table-column>
       <el-table-column prop="reason" label="说明" min-width="200" />
       <el-table-column label="归档" width="140"><template #default="{ row }"><el-button tag="a" :href="runDownloadUrl(row.id)" :disabled="inProgress(row.state)" type="success" link>下载任务数据</el-button></template></el-table-column>
+      <el-table-column label="操作" width="85" fixed="right"><template #default="{ row }"><RunDeleteButton :run="row" /></template></el-table-column>
     </el-table>
-    <p>显示最近 50 次 Web 运行中属于本栏目的记录。任务结束后可下载配置、规划和轨迹数据；全部记录也可在“系统设置”查看。</p>
+    <p>显示最近 50 次 Web 运行中属于本栏目的记录。任务结束后可下载配置、规划和轨迹数据；全部记录也可在“系统设置”查看。删除仅移除记录条目，原始实验数据保留。</p>
   </el-card>
 </template>
 <style scoped>

@@ -124,3 +124,120 @@ def test_mode_switch_does_not_rewrite_finished_run(store, monkeypatch):
     device_cache.update('safety', {'mode': 'coverage', 'mode_revision': 2})
     workspace.sync()
     assert run['state'] == store.list_runs()[0]['state'] == 'COMPLETED'
+
+
+def create_record(store, state='COMPLETED', mode='waypoint'):
+    origin = store.configured_origin()
+    mission = store.save(Mission(name='记录清理测试', mode='waypoint', waypoints=[
+        {'latitude': origin['latitude'], 'longitude': origin['longitude']}]), origin)
+    run = store.create_run({**mission, 'mode': mode}, 1, 'planning' if mode == 'coverage' else 'execution')
+    run['state'] = state
+    store.save_run(run)
+    return run, mission
+
+
+@pytest.fixture
+def records_client(store, monkeypatch):
+    from fastapi.testclient import TestClient
+    from agri_backend import main
+    from agri_backend.devices import device_cache
+    workspace = main.app.state.workspace
+    monkeypatch.setattr(device_cache, 'values', {})
+    monkeypatch.setattr(workspace, 'store', store)
+    monkeypatch.setattr(workspace, 'active', None)
+    monkeypatch.setattr(workspace, 'plan_requested', None)
+    monkeypatch.setattr(workspace, 'plan_sequence', None)
+    def no_control():
+        pytest.fail('Record deletion must never call ROS or take control')
+    monkeypatch.setattr(workspace, 'gateway', no_control)
+    return TestClient(main.app), workspace  # No lifespan, ROS executor or hardware.
+
+
+def test_delete_record_preserves_data_mission_and_persists_across_store_restart(store, records_client):
+    client, workspace = records_client
+    run, mission = create_record(store)
+    other, _ = create_record(store)
+    directory = store.run_path(run['id'])
+    (directory / 'tracks').mkdir()
+    (directory / 'tracks/waypoint_test.csv').write_text('stamp,x,y\n1,2,3\n')
+    before = {path.relative_to(directory): path.read_bytes() for path in directory.rglob('*') if path.is_file()}
+    workspace.active = run
+    response = client.delete(f'/api/runs/{run["id"]}')
+    assert response.status_code == 200, response.text
+    assert response.json() == {'success': True, 'data_preserved': True}
+    assert workspace.active is None
+    assert {path.relative_to(directory): path.read_bytes() for path in directory.rglob('*') if path.is_file()} == before
+    assert store.get(mission['id']) == mission
+    assert [record['id'] for record in store.list_runs()] == [other['id']]
+    assert [record['id'] for record in MissionStore(store.root).list_runs()] == [other['id']]
+    assert [record['id'] for record in client.get('/api/workspace').json()['runs']] == [other['id']]
+    assert client.delete(f'/api/runs/{run["id"]}').status_code == 200  # Safe repeat.
+    assert 'RUN_RECORD_DELETED' in (store.root / 'data/web/events.jsonl').read_text()
+
+
+@pytest.mark.parametrize('state', ['PREPARING', 'PLANNING', 'ACQUIRING', 'RUNNING', 'PAUSED', 'WAITING_PATH', 'UNKNOWN'])
+def test_unfinished_record_cannot_be_deleted(store, records_client, state):
+    client, _ = records_client
+    run, _ = create_record(store, state)
+    response = client.delete(f'/api/runs/{run["id"]}')
+    assert response.status_code == 409
+    assert not store.deleted_run_path(run['id']).exists()
+    assert store.list_runs()[0]['id'] == run['id']
+
+
+@pytest.mark.parametrize('source', ['waypoint', 'tracking', 'planning'])
+def test_live_writer_blocks_deletion_even_if_stored_record_says_finished(store, records_client, source):
+    from agri_backend.devices import device_cache
+    client, _ = records_client
+    run, _ = create_record(store)
+    directory = store.run_path(run['id'])
+    device_cache.update(source, {'state': 'PLANNING' if source == 'planning' else 'RUNNING',
+        'output_directory' if source == 'planning' else 'run_directory': str(directory / ('paths' if source == 'planning' else 'tracks'))})
+    assert client.delete(f'/api/runs/{run["id"]}').status_code == 409
+    assert not store.deleted_run_path(run['id']).exists()
+
+
+def test_delete_ready_plan_clears_only_its_binding_and_does_not_reattach(store, records_client):
+    client, workspace = records_client
+    run, _ = create_record(store, 'READY', 'coverage')
+    workspace.active = run
+    workspace.plan_requested, workspace.plan_sequence = 123, 5
+    assert client.delete(f'/api/runs/{run["id"]}').status_code == 200
+    assert workspace.active is None
+    assert workspace.plan_requested is workspace.plan_sequence is None
+    assert client.get('/api/workspace').json()['active_run'] is None
+    assert store.run_path(run['id']).is_dir()
+
+
+def test_deleting_old_record_does_not_clear_another_active_run(store, records_client):
+    client, workspace = records_client
+    old, _ = create_record(store)
+    active, _ = create_record(store, 'RUNNING')
+    workspace.active = active
+    assert client.delete(f'/api/runs/{old["id"]}').status_code == 200
+    assert workspace.active is active
+    assert store.list_runs()[0]['id'] == active['id']
+
+
+def test_delete_invalid_missing_record_and_busy_lock_leave_store_unchanged(store, records_client):
+    client, workspace = records_client
+    run, _ = create_record(store)
+    assert client.delete('/api/runs/not-a-run').status_code == 422
+    assert client.delete('/api/runs/20261030_010101_000000_web_00000000').status_code == 404
+    workspace.lock.acquire()
+    try:
+        assert client.delete(f'/api/runs/{run["id"]}').status_code == 409
+    finally:
+        workspace.lock.release()
+    assert not store.deleted_run_path(run['id']).exists()
+
+
+def test_deleted_entries_are_filtered_before_the_50_record_limit(store):
+    run, mission = create_record(store)
+    for _ in range(50):
+        run = store.create_run(mission, 1, 'execution')
+        run['state'] = 'COMPLETED'
+        store.save_run(run)
+    store.delete_run(run['id'])
+    assert len(store.list_runs()) == 50
+    assert run['id'] not in {record['id'] for record in store.list_runs()}

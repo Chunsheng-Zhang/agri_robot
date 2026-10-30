@@ -17,7 +17,7 @@ from pydantic import Field
 from starlette.background import BackgroundTask
 
 from .devices import device_cache, service_call
-from .missions import Mission, MissionStore, StrictModel, WaypointParameters, CoverageParameters, atomic_json, now
+from .missions import Mission, MissionStore, StrictModel, WaypointParameters, CoverageParameters, atomic_json, now, DELETABLE_RUN_STATES
 
 
 class ManualCommand(StrictModel):
@@ -367,6 +367,31 @@ def install_routes(app, require_bridge, robot_snapshot):
         result = workspace.gateway().stop(data.token)
         workspace.event('WEB_CONTROL_STOPPED')
         return result
+
+    @router.delete('/api/runs/{identity}')
+    def delete_run(identity: str):
+        with workspace.operation():
+            directory = workspace.store.run_path(identity)
+            workspace.sync()
+            run = json.loads((directory / 'run.json').read_text(encoding='utf-8'))
+            active = workspace.active
+            if run['state'] not in DELETABLE_RUN_STATES or (
+                    active and active['id'] == identity and active['state'] not in DELETABLE_RUN_STATES):
+                raise HTTPException(409, '任务尚未结束，请先取消任务并等待停止确认')
+            snapshot = device_cache.snapshot()
+            for source in ('waypoint', 'tracking', 'planning'):
+                live = snapshot[source]
+                location = live.get('output_directory' if source == 'planning' else 'run_directory')
+                expected = directory / ('paths' if source == 'planning' else 'tracks')
+                if live['fresh'] and location == str(expected) and live.get('state') in (
+                        'ACQUIRING', 'RUNNING', 'PAUSED', 'PLANNING'):
+                    raise HTTPException(409, '控制器仍在使用这条记录，请等待任务停止确认')
+            workspace.store.delete_run(identity)
+            if active and active['id'] == identity:
+                workspace.active = None
+                workspace.plan_requested = workspace.plan_sequence = None
+            workspace.event('RUN_RECORD_DELETED', run_id=identity, data_preserved=True)
+            return {'success': True, 'data_preserved': True}
 
     @router.get('/api/runs/{identity}/download')
     def download(identity: str):

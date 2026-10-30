@@ -15,6 +15,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ROOT = Path(__file__).resolve().parents[1]
+DELETABLE_RUN_STATES = frozenset(('COMPLETED', 'CANCELED', 'FAILED', 'FAULT', 'READY'))
 try:
     from agri_base.coordinates import LocalFrame
     from agri_path_planning.field import field_from_data
@@ -109,6 +110,7 @@ class MissionStore:
             self.root / 'agri_robot_ws/src/agri_bringup/config/system.yaml')))
         self.documents = self.root / 'data/web/missions'
         self.runs = self.root / 'data/experiments'
+        self.deleted_runs = self.root / 'data/web/deleted_runs'
 
     def config(self):
         with self.config_path.open(encoding='utf-8') as stream:
@@ -204,5 +206,22 @@ class MissionStore:
         atomic_json(self.run_path(run['id']) / 'run.json', {k: v for k, v in run.items() if not k.startswith('_')})
 
     def list_runs(self):
-        return [json.loads(p.read_text(encoding='utf-8')) for p in sorted(
-            self.runs.glob('*_web_*/run.json'), reverse=True)[:50]]
+        records = []
+        for path in sorted(self.runs.glob('*_web_*/run.json'), reverse=True):
+            if (self.deleted_runs / f'{path.parent.name}.json').exists():
+                continue
+            records.append(json.loads(path.read_text(encoding='utf-8')))
+            if len(records) == 50:
+                break
+        return records
+
+    def deleted_run_path(self, identity):
+        self.run_path(identity)  # Validate before constructing any writable path.
+        return self.deleted_runs / f'{identity}.json'
+
+    def delete_run(self, identity):
+        """Remove a list entry persistently; keep all original experiment files."""
+        run = json.loads((self.run_path(identity) / 'run.json').read_text(encoding='utf-8'))
+        if run['state'] not in DELETABLE_RUN_STATES:
+            raise ValueError('任务尚未结束，请先取消任务并等待停止确认')
+        atomic_json(self.deleted_run_path(identity), {'id': identity, 'deleted_at': now()})

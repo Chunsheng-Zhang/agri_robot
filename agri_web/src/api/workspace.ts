@@ -41,6 +41,7 @@ export const resetObstacle = () => request('/api/robot/obstacle-stop/reset')
 export const setLidarProtection = (enabled: boolean) => request<{ success: boolean; enabled: boolean; message: string }>(
   '/api/robot/lidar-protection', { enabled })
 export const runDownloadUrl = (id: string) => apiUrl(`/api/runs/${id}/download`)
+export const deleteRun = (id: string) => request<{ success: boolean; data_preserved: boolean }>(`/api/runs/${id}`, undefined, 'DELETE')
 export const armManual = () => request<{ token: string; server_time: number; limits: { linear: number; angular: number } }>('/api/control/arm')
 export const stopManual = (token: string) => request('/api/control/stop', { token })
 export async function manualCommand(data: { token: string; seq: number; linear: number; angular: number; expires_at: number }) {
