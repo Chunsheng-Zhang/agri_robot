@@ -1,6 +1,9 @@
 import socket
 import time
 import math
+import base64
+import json
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -8,7 +11,7 @@ import rclpy
 from rclpy.node import Node
 
 from geometry_msgs.msg import Vector3, Vector3Stamped
-from std_msgs.msg import UInt32, Float32
+from std_msgs.msg import UInt32, Float32, String
 from sensor_msgs.msg import NavSatFix, NavSatStatus
 
 from mgx23_driver.mgx23_parser import (
@@ -43,6 +46,9 @@ class MGX23Node(Node):
         if not math.isfinite(self.max_accuracy) or self.max_accuracy <= 0:
             raise ValueError("max_accuracy must be positive")
         self.last_device_time = None
+        self.raw_session = uuid.uuid4().hex
+        self.raw_sequence = 0
+        self.raw_pub = self.create_publisher(String, "/mgx23/raw", 100)
         self.raw_log = None
         raw_folder = self.get_parameter("raw_log_directory").value
         if raw_folder:
@@ -174,6 +180,18 @@ class MGX23Node(Node):
                         pass
                     self.raw_log = None
 
+            # Exact received bytes, before framing/checksum/accuracy filtering.
+            # The task recorder owns task-scoped storage; this does not change
+            # the existing continuous raw log or any navigation validity test.
+            self.raw_sequence += 1
+            if self.raw_pub.get_subscription_count():
+                self.raw_pub.publish(String(data=json.dumps({
+                    'schema_version': 1, 'session': self.raw_session,
+                    'sequence': self.raw_sequence, 'transport': self.transport,
+                    'stamp_ns': self.get_clock().now().nanoseconds,
+                    'unix_ns': time.time_ns(),
+                    'data_base64': base64.b64encode(chunk).decode('ascii'),
+                })))
             self.buffer.extend(chunk)
 
         except BlockingIOError:

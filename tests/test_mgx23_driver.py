@@ -14,6 +14,9 @@ class Publisher:
     def publish(self, message):
         self.messages.append(message)
 
+    def get_subscription_count(self):
+        return 1
+
 
 class Harness:
     receive_data = MGX23Node.receive_data
@@ -26,12 +29,14 @@ class Harness:
         self.last_device_time = None
         self.raw_log = None
         self.max_accuracy = 0.5
+        self.raw_session, self.raw_sequence = 'test-session', 0
+        self.raw_pub = Publisher()
         for key in ('attitude_pub', 'attitude_stamped_pub', 'position_pub', 'velocity_pub',
                     'velocity_stamped_pub', 'status_pub', 'accuracy_pub'):
             setattr(self, key, Publisher())
 
     def get_clock(self):
-        return SimpleNamespace(now=lambda: SimpleNamespace(to_msg=lambda: Time(sec=123)))
+        return SimpleNamespace(now=lambda: SimpleNamespace(to_msg=lambda: Time(sec=123), nanoseconds=123000000000))
 
     def get_logger(self):
         return SimpleNamespace(warning=lambda message: None)
@@ -91,3 +96,17 @@ def test_navi_velocity_offsets_and_units_from_manual():
     assert abs(v.x - 0.3) < 1e-6
     assert abs(v.y + 0.4) < 1e-6
     assert v.z == 2.0
+
+
+def test_raw_chunks_retain_bad_frames_and_fragment_boundaries():
+    import json
+    import base64
+    packet = frame()
+    h = Harness(b'bad bytes' + packet[:31])
+    h.receive_data()
+    h.sock.recv = lambda size: packet[31:]
+    h.receive_data()
+    raw = [json.loads(m.data) for m in h.raw_pub.messages]
+    assert [r['sequence'] for r in raw] == [1, 2]
+    assert b''.join(base64.b64decode(r['data_base64']) for r in raw) == b'bad bytes' + packet
+    assert len(h.position_pub.messages) == 1
