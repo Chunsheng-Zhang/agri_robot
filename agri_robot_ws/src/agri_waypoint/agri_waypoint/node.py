@@ -17,7 +17,7 @@ class WaypointNode(TaskNode):
     def __init__(self):
         super().__init__('waypoint', 'waypoint')
         defaults = {'waypoints_file': '', 'max_linear': 0.2, 'min_linear': 0.03,
-                    'max_angular': 0.5, 'arrival_tolerance': 0.2, 'heading_kp': 1.0,
+                    'max_angular': 0.5, 'arrival_tolerance': 0.1, 'heading_kp': 1.0,
                     'distance_kp': 0.5, 'rotate_threshold': 1.0, 'align_threshold': 0.2,
                     'dwell_time': 2.0, 'control_rate': 20.0, 'trajectory_directory': ''}
         for name, value in defaults.items():

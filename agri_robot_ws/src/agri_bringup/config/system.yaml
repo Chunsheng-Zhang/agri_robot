@@ -53,7 +53,7 @@ waypoint:
     max_linear: 0.20
     min_linear: 0.03
     max_angular: 0.50
-    arrival_tolerance: 0.20
+    arrival_tolerance: 0.10
     heading_kp: 1.0
     distance_kp: 0.5
     rotate_threshold: 1.0

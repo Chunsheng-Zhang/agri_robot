@@ -61,7 +61,7 @@ class WaypointParameters(StrictModel):
     max_linear: float = Field(default=0.2, gt=0, le=1)
     min_linear: float = Field(default=0.03, gt=0, le=1)
     max_angular: float = Field(default=0.5, gt=0, le=2)
-    arrival_tolerance: float = Field(default=0.2, ge=0.02, le=5)
+    arrival_tolerance: float = Field(default=0.1, ge=0.02, le=5)
     dwell_time: float = Field(default=2, ge=0, le=600)
     heading_kp: float = Field(default=1, gt=0, le=10)
     distance_kp: float = Field(default=0.5, gt=0, le=10)

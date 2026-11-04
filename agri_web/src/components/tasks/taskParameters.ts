@@ -7,12 +7,12 @@ export const parameterFields: Record<MissionMode, ParameterField[]> = {
   waypoint: [
     { key: 'max_linear', label: '最大行驶速度', unit: 'm/s', min: 0.01, max: 1, step: 0.05 },
     { key: 'min_linear', label: '最小行驶速度', unit: 'm/s', min: 0.01, max: 1, step: 0.01 }, ...shared,
-    { key: 'arrival_tolerance', label: '到点距离阈值', unit: 'm', min: 0.02, max: 5, step: 0.05 },
+    { key: 'arrival_tolerance', label: '到点距离阈值', unit: 'm', min: 0.02, max: 5, step: 0.01, hint: '与目标距离不超过此值时停车并进入停留；不是独立测量的定位精度' },
     { key: 'dwell_time', label: '默认到点停留', unit: 's', min: 0, max: 600, step: 1 },
-    { key: 'rotate_threshold', label: '开始原地转向阈值', unit: '°', min: 1, max: 180, step: 5, degrees: true },
-    { key: 'align_threshold', label: '结束原地转向阈值', unit: '°', min: 1, max: 180, step: 2, degrees: true },
-    { key: 'heading_kp', label: '航向控制增益', min: 0.01, max: 10, step: 0.1 },
-    { key: 'distance_kp', label: '距离控制增益', min: 0.01, max: 10, step: 0.1 },
+    { key: 'rotate_threshold', label: '开始原地转向阈值', unit: '°', min: 1, max: 180, step: 5, degrees: true, hint: '航向误差达到此值时停止前进、原地对齐；默认约57.3°，必须大于结束阈值' },
+    { key: 'align_threshold', label: '结束原地转向阈值', unit: '°', min: 1, max: 180, step: 2, degrees: true, hint: '原地转向期间误差降至此值时恢复前进；默认约11.5°，两个阈值之间保持原状态' },
+    { key: 'heading_kp', label: '航向控制增益', min: 0.01, max: 10, step: 0.1, hint: '角速度=增益×航向误差(rad)，再限幅；越大纠偏越快，但可能增加摆动' },
+    { key: 'distance_kp', label: '距离控制增益', min: 0.01, max: 10, step: 0.1, hint: '基础线速度=增益×目标距离，再限幅并按航向偏差减速；越大越晚开始降速' },
   ],
   coverage: [
     { key: 'operation_width', label: '作业幅宽', unit: 'm', min: 0.1, max: 20, step: 0.1 },

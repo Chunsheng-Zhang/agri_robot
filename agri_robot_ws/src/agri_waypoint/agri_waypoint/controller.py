@@ -6,7 +6,7 @@ from agri_base.coordinates import finite_positive, wrap_angle
 
 class WaypointController:
     def __init__(self, max_linear=0.2, min_linear=0.03, max_angular=0.5,
-                 arrival_tolerance=0.2, heading_kp=1.0, distance_kp=0.5,
+                 arrival_tolerance=0.1, heading_kp=1.0, distance_kp=0.5,
                  rotate_threshold=1.0, align_threshold=0.2):
         for name, value in locals().copy().items():
             if name != 'self':
