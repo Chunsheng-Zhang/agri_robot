@@ -29,7 +29,7 @@ class SyntheticSystem:
         from ament_index_python.packages import get_package_prefix
         from geometry_msgs.msg import Twist, Vector3Stamped
         from sensor_msgs.msg import NavSatFix, LaserScan
-        from std_msgs.msg import Float32
+        from std_msgs.msg import Float32, String
         from pyproj.enums import TransformDirection
         from agri_base.localization import Localization
         from agri_base.chassis_adapter import ChassisAdapter
@@ -73,6 +73,10 @@ class SyntheticSystem:
         attitude = self.bench.create_publisher(Vector3Stamped, '/mgx23/attitude_stamped', 1)
         scan = self.bench.create_publisher(LaserScan, '/scan', 1)
         voltage = self.bench.create_publisher(Float32, '/voltage', 1)
+        velocity = self.bench.create_publisher(Vector3Stamped, '/mgx23/velocity_stamped', 10)
+        feedback = self.bench.create_publisher(Twist, '/vel_raw', 10)
+        raw = self.bench.create_publisher(String, '/mgx23/raw', 100)
+        self.raw_sequence = 0
 
         def sensors():
             s = self.state
@@ -90,6 +94,21 @@ class SyntheticSystem:
             att.vector.z = math.atan2(math.sin(heading), math.cos(heading))
             attitude.publish(att)
             fix.publish(position)
+            vel = Vector3Stamped()
+            vel.header = position.header
+            vel.vector.x = s['v'] * math.sin(s['yaw'])
+            vel.vector.y = s['v'] * math.cos(s['yaw'])
+            velocity.publish(vel)
+            twist = Twist()
+            twist.linear.x, twist.angular.z = s['v'], s['w']
+            feedback.publish(twist)
+            import base64
+            import time
+            self.raw_sequence += 1
+            raw.publish(String(data=json.dumps({'schema_version': 1, 'session': 'synthetic-test-only',
+                'sequence': self.raw_sequence, 'transport': 'synthetic',
+                'stamp_ns': self.bench.get_clock().now().nanoseconds, 'unix_ns': time.time_ns(),
+                'data_base64': base64.b64encode(b'synthetic-mgx23-bytes').decode()})))
             laser = LaserScan()
             laser.header.stamp, laser.header.frame_id = position.header.stamp, 'laser'
             laser.angle_min, laser.angle_increment = -math.pi, math.pi / 360

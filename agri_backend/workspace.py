@@ -277,9 +277,22 @@ class Workspace:
                 source = 'waypoint'
             # Safety checks the mode again atomically when granting the lease.
             requested = monotonic()
+            capture_started = False
             try:
+                # Open task-scoped capture before any controller can acquire motion.
+                try:
+                    gateway.recorder.begin(directory, source)
+                    capture_started = True
+                except (OSError, RuntimeError) as exc:
+                    raise HTTPException(503, f'实验记录器尚未就绪，任务未开始：{exc}') from exc
+                requested = monotonic()
                 result = service_call(self.require_bridge().node, f'/{source}/start')
             except Exception as exc:
+                # Only explicit rejection proves the task was not accepted.
+                # Transport errors/timeouts may occur after acceptance; keep
+                # capture until observed status closes it, never assume a stop.
+                if capture_started and isinstance(exc, HTTPException) and exc.status_code == 409:
+                    gateway.recorder.abort(str(getattr(exc, 'detail', exc)))
                 run['reason'] = str(getattr(exc, 'detail', exc))
                 if mission['mode'] == 'waypoint':
                     run['state'] = 'FAILED'
@@ -411,13 +424,19 @@ def install_routes(app, require_bridge, robot_snapshot):
             live = device_cache.snapshot()[source]
             if live['fresh'] and live.get('run_directory') == str(directory / 'tracks') and live.get('state') in ('RUNNING', 'PAUSED', 'ACQUIRING'):
                 raise HTTPException(409, '正在等待控制器停止并关闭记录文件，请稍后重试')
+            bridge = getattr(app.state, 'ros_bridge', None)
+            recorder = getattr(getattr(getattr(bridge, 'node', None), 'workspace_ros', None), 'recorder', None)
+            if recorder and recorder.busy(directory):
+                raise HTTPException(409, '任务采集或指标分析正在收尾，请稍后再下载归档')
         except ValueError as exc:
             raise HTTPException(404, '任务记录不存在') from exc
         files = [p for p in directory.rglob('*') if p.is_file() and not p.is_symlink()
-                 and p.suffix in ('.json', '.yaml', '.csv', '.jsonl') and directory in p.resolve().parents]
+                 and p.suffix in ('.json', '.yaml', '.csv', '.jsonl', '.bin', '.png', '.md') and directory in p.resolve().parents]
         if sum(p.stat().st_size for p in files) > 200 * 1024 * 1024:
             raise HTTPException(413, '任务数据超过 200 MB，请从实验目录直接复制')
-        with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as temporary:
+        archive_cache = workspace.store.root / '.runtime/archives'
+        archive_cache.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(suffix='.zip', delete=False, dir=archive_cache) as temporary:
             filename = Path(temporary.name)
         try:
             with zipfile.ZipFile(filename, 'w', zipfile.ZIP_DEFLATED) as archive:

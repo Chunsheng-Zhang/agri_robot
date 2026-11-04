@@ -52,6 +52,7 @@ def test_web_modes_missions_planning_recordings_and_deadman():
         assert not system.safety.gate.owner and system.safety.lidar_required
         post('/api/robot/lidar-protection', {'enabled': False})
         until(lambda: system.waypoint.mode_revision == system.safety.mode_revision)
+        until(lambda: client.get('/api/devices').json()['waypoint'].get('state') == 'FAULT')
         assert system.waypoint.state == 'FAULT' and system.state['v'] == 0
         post(f'/api/missions/{waypoint["id"]}/start')
         until(lambda: system.waypoint.state == 'RUNNING' and system.state['v'] > 0)
@@ -70,11 +71,19 @@ def test_web_modes_missions_planning_recordings_and_deadman():
         until(lambda: system.waypoint.mode_matches)
         assert not system.safety.gate.owner and system.state['v'] == 0
         archive_run = client.get('/api/workspace').json()['runs'][0]
+        from pathlib import Path
+        directory = system.workspace.store.run_path(archive_run['id'])
+        until(lambda: not system.backend.workspace_ros.recorder.busy(directory))
         archive = client.get(f'/api/runs/{archive_run["id"]}/download')
         assert archive.status_code == 200, archive.text
         with zipfile.ZipFile(io.BytesIO(archive.content)) as data:
             assert any(name.startswith('tracks/waypoint_') and name.endswith('.csv') for name in data.namelist())
             assert any(name.startswith('tracks/waypoint_') and name.endswith('.json') for name in data.namelist())
+            assert 'raw/mgx23.bin' in data.namelist()
+            assert b'synthetic-mgx23-bytes' in data.read('raw/mgx23.bin')
+            assert 'telemetry/motion.csv' in data.namelist()
+            assert 'analysis/heading_error.png' in data.namelist()
+            assert 'analysis/trajectory_and_speed.png' in data.namelist()
 
         post('/api/system/mode', {'mode': 'coverage'})
         until(system.planner.mode_ready)
@@ -109,10 +118,20 @@ def test_web_modes_missions_planning_recordings_and_deadman():
         post('/api/tasks/tracking/cancel')
         until(lambda: system.tracker.state == 'CANCELED' and not system.safety.gate.owner)
         coverage_run = client.get('/api/workspace').json()['active_run']
+        directory = system.workspace.store.run_path(coverage_run['id'])
+        until(lambda: not system.backend.workspace_ros.recorder.busy(directory))
         archive = client.get(f'/api/runs/{coverage_run["id"]}/download')
         assert archive.status_code == 200
         with zipfile.ZipFile(io.BytesIO(archive.content)) as data:
             assert any(name.startswith('tracks/approach_') and name.endswith('.csv') for name in data.namelist())
+            import json
+            recording = json.loads(data.read('telemetry/recording.json'))
+            assert recording['terminal']['state'] == 'CANCELED'
+            assert recording['samples_by_topic']['/cmd_vel'] > 0
+            assert recording['samples_by_topic']['/base/driver_cmd_vel'] > 0
+            assert recording['samples_by_topic']['/vel_raw'] > 0
+            assert recording['samples_by_topic']['/mgx23/velocity_stamped'] > 0
+            assert json.loads(data.read('analysis/status.json'))['state'] == 'SUCCEEDED'
         post('/api/system/mode', {'mode': 'base'})
         until(lambda: client.get('/api/devices').json()['safety']['mode'] == 'base')
         session = post('/api/control/arm')
@@ -123,6 +142,24 @@ def test_web_modes_missions_planning_recordings_and_deadman():
         until(lambda: system.state['v'] == 0 and not system.safety.gate.owner, 2)
         assert client.post('/api/control/command', json={'token': session['token'], 'seq': 2, 'linear': 0.1,
             'angular': 0.0, 'expires_at': time.time() + 0.2}).status_code == 409
+
+        # A completed run must finalize capture/plots without any browser polling
+        # /api/workspace to drive the state transition.
+        post('/api/system/mode', {'mode': 'waypoint'})
+        until(lambda: system.waypoint.mode_matches)
+        lon, lat = frame.transformer.transform(frame.e0 + system.state['x'] + .6,
+            frame.n0 + system.state['y'], direction=TransformDirection.INVERSE)
+        final_mission = post('/api/missions', {'name': '自动完成与独立归档验证', 'mode': 'waypoint',
+            'waypoints': [{'latitude': lat, 'longitude': lon, 'dwell_time': 0}]})
+        final_start = post(f'/api/missions/{final_mission["id"]}/start')
+        final_directory = system.workspace.store.run_path(final_start['run_id'])
+        until(lambda: system.waypoint.state == 'COMPLETED' and system.state['v'] == 0, 30)
+        until(lambda: not system.backend.workspace_ros.recorder.busy(final_directory), 15)
+        recording = json.loads((final_directory / 'telemetry/recording.json').read_text())
+        assert recording['terminal']['state'] == 'COMPLETED'
+        metrics = json.loads((final_directory / 'analysis/metrics.json').read_text())
+        assert metrics['task_state'] == 'COMPLETED'
+        assert (final_directory / 'analysis/trajectory_and_speed.png').is_file()
     finally:
         client.close()
         system.close()

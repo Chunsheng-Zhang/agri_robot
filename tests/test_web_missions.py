@@ -126,6 +126,42 @@ def test_mode_switch_does_not_rewrite_finished_run(store, monkeypatch):
     assert run['state'] == store.list_runs()[0]['state'] == 'COMPLETED'
 
 
+def test_archive_includes_raw_and_analysis_and_blocks_live_analysis(store, monkeypatch):
+    import io
+    import zipfile
+    from types import SimpleNamespace
+    from fastapi.testclient import TestClient
+    from agri_backend import main
+    from agri_backend.devices import device_cache
+    workspace = main.app.state.workspace
+    monkeypatch.setattr(workspace, 'store', store)
+    monkeypatch.setattr(workspace, 'active', None)
+    monkeypatch.setattr(device_cache, 'values', {})
+    run, _ = create_record(store)
+    folder = store.run_path(run['id'])
+    for name, content in (('raw/mgx23.bin', b'original\x00bytes'),
+                          ('analysis/heading_error.png', b'png-data'),
+                          ('analysis/README.md', b'report')):
+        path = folder / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(content)
+    pending = [True]
+    recorder = SimpleNamespace(busy=lambda path: pending[0])
+    monkeypatch.setattr(main.app.state, 'ros_bridge', SimpleNamespace(
+        node=SimpleNamespace(workspace_ros=SimpleNamespace(recorder=recorder))), raising=False)
+    client = TestClient(main.app)
+    url = f'/api/runs/{run["id"]}/download'
+    assert client.get(url).status_code == 409
+    pending[0] = False
+    response = client.get(url)
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        assert archive.read('raw/mgx23.bin') == b'original\x00bytes'
+        assert archive.read('analysis/heading_error.png') == b'png-data'
+        assert 'analysis/README.md' in archive.namelist()
+    assert not list((store.root / '.runtime/archives').glob('*.zip'))
+
+
 def create_record(store, state='COMPLETED', mode='waypoint'):
     origin = store.configured_origin()
     mission = store.save(Mission(name='记录清理测试', mode='waypoint', waypoints=[

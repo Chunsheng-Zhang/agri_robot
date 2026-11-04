@@ -319,6 +319,11 @@ if ROS_AVAILABLE:
             self.reference_subscription = self.create_subscription(Path, '/reference_path', self.reference_path_callback, qos)
             self.reference_transient = transient
 
+        def destroy_node(self):
+            if hasattr(self, 'workspace_ros'):
+                self.workspace_ros.recorder.close()
+            return super().destroy_node()
+
         # ====================================================
         # 7.6 里程计回调
         # ====================================================

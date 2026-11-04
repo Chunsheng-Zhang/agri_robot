@@ -28,6 +28,8 @@ class RosWorkspace:
         from agri_interfaces.srv import AcquireControl
         from std_srvs.srv import Trigger
         self.node, self.clients = node, {}
+        from .experiment_recording import ExperimentRecorder
+        self.recorder = ExperimentRecorder(node)
         self.types = {'trigger': Trigger, 'get': GetParameters,
                       'set': SetParametersAtomically, 'lifecycle': ManageLifecycleNodes, 'lease': AcquireControl}
         for mode in ('base', 'waypoint', 'coverage'):
