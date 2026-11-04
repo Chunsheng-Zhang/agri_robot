@@ -27,6 +27,7 @@ class Harness:
         self.sock = SimpleNamespace(recv=lambda size: chunk)
         self.transport = 'tcp'
         self.last_device_time = None
+        self.last_status_time = None
         self.raw_log = None
         self.max_accuracy = 0.5
         self.raw_session, self.raw_sequence = 'test-session', 0
@@ -42,11 +43,12 @@ class Harness:
         return SimpleNamespace(warning=lambda message: None)
 
 
-def frame(device_time=1, latitude=36, accuracy=0.1):
+def frame(device_time=1, latitude=36, accuracy=0.1, status=0):
     result = bytearray(100)
     result[:4], result[98:] = b'fmin', b'ed'
     struct.pack_into('<dddd', result, 4, device_time, latitude, 117.0, 50.0)
     struct.pack_into('<f', result, 60, accuracy)
+    struct.pack_into('<I', result, 92, status)
     struct.pack_into('<H', result, 96, sum(result[:96]) & 0xffff)
     return bytes(result)
 
@@ -61,6 +63,7 @@ def test_checksum_rejection_and_stamped_compatibility():
                                h.velocity_stamped_pub.messages[0])
     assert fix.header.stamp == attitude.header.stamp == velocity.header.stamp
     assert fix.status.status == -1  # No invented RTK/INS classification.
+    assert len(h.status_pub.messages) == 1  # Corrupt frames cannot refresh diagnostics.
 
 
 def test_duplicate_device_sample_does_not_refresh_pose():
@@ -110,3 +113,20 @@ def test_raw_chunks_retain_bad_frames_and_fragment_boundaries():
     assert [r['sequence'] for r in raw] == [1, 2]
     assert b''.join(base64.b64decode(r['data_base64']) for r in raw) == b'bad bytes' + packet
     assert len(h.position_pub.messages) == 1
+
+
+def test_initialization_status_available_before_navigation_accuracy_is_valid():
+    h = Harness(frame(accuracy=10, status=0x00040000)
+                + frame(device_time=2, latitude=float('nan'), status=0x001C0002)
+                + frame(device_time=2, latitude=float('nan'), status=0x001C0002))
+    h.receive_data()
+    assert [msg.data for msg in h.status_pub.messages] == [0x00040000, 0x001C0002]
+    assert not h.position_pub.messages
+    assert not h.attitude_stamped_pub.messages
+    assert not h.velocity_stamped_pub.messages
+
+
+def test_invalid_device_time_cannot_refresh_status():
+    h = Harness(frame(device_time=float('nan'), status=0x001C0002))
+    h.receive_data()
+    assert not h.status_pub.messages

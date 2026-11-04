@@ -11,6 +11,27 @@ from time import monotonic
 from urllib.parse import urlencode
 
 
+# MGX23 manual §2.4 and the user-supplied four-flag initialization rule.
+MGX23_INIT_FLAGS = (
+    ('READY', '滤波器收敛', 0x00000002),
+    ('PPS_READY', '收到 PPS 信号', 0x00040000),
+    ('SYNC_READY', '时间同步成功', 0x00080000),
+    ('GNSS_CONNECT', '解析到 RTK 数据', 0x00100000),
+)
+MGX23_INIT_MASK = sum(mask for _, _, mask in MGX23_INIT_FLAGS)
+
+
+def mgx23_initialization(status):
+    known = type(status) is int and 0 <= status <= 0xFFFFFFFF
+    return {
+        'status_word': status if known else None,
+        'initialized': (status & MGX23_INIT_MASK) == MGX23_INIT_MASK if known else None,
+        'flags': [{'name': name, 'label': label, 'mask': mask,
+                   'active': bool(status & mask) if known else None}
+                  for name, label, mask in MGX23_INIT_FLAGS],
+    }
+
+
 class DeviceCache:
     def __init__(self):
         self.lock, self.values = Lock(), {}
@@ -44,13 +65,15 @@ class DeviceCache:
         with self.lock:
             items = copy.deepcopy(self.values)
         result = {}
-        for name in ('safety', 'obstacles', 'manual', 'camera', 'waypoint', 'tracking', 'planning', 'gnss', 'origin', 'voltage', 'scan'):
+        for name in ('safety', 'obstacles', 'manual', 'camera', 'waypoint', 'tracking', 'planning', 'gnss', 'mgx23', 'origin', 'voltage', 'scan'):
             value, received = items.get(name, ({}, -math.inf))
             age = now - received
             fresh = age < (0.5 if name == 'gnss' else 3.0 if name == 'voltage' else 1.0)
             if name == 'origin':
                 fresh = bool(value)  # Fixed configuration, deliberately latched; not a heartbeat.
             result[name] = {**value, 'fresh': fresh, 'age_seconds': round(age, 3) if math.isfinite(age) else None}
+            if name == 'mgx23':
+                result[name].update(mgx23_initialization(value.get('status_word') if fresh else None))
             if not fresh:
                 if name in ('camera', 'manual'):
                     result[name]['connected'] = False
@@ -73,7 +96,7 @@ class LidarProtectionRequest(BaseModel):
 def install_ros_devices(node):
     from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy, qos_profile_sensor_data
     from sensor_msgs.msg import NavSatFix, LaserScan
-    from std_msgs.msg import String, Float32
+    from std_msgs.msg import String, Float32, UInt32
     from std_srvs.srv import SetBool, Trigger
     latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                          reliability=ReliabilityPolicy.RELIABLE)
@@ -117,6 +140,8 @@ def install_ros_devices(node):
             device_cache.update('gnss', {'latitude': msg.latitude, 'longitude': msg.longitude,
                                          'fix_status': msg.status.status})
     node.create_subscription(NavSatFix, '/mgx23/position', gnss, qos_profile_sensor_data)
+    node.create_subscription(UInt32, '/mgx23/status',
+        lambda msg: device_cache.update('mgx23', {'status_word': msg.data}), 10)
     node.device_service_clients = {'/safety/emergency_stop': node.create_client(SetBool, '/safety/emergency_stop'),
                                     '/safety/lidar_protection': node.create_client(SetBool, '/safety/lidar_protection'),
                                     '/safety/obstacle/reset': node.create_client(Trigger, '/safety/obstacle/reset')}

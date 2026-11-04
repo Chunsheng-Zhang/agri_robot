@@ -6,7 +6,61 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from agri_backend.devices import DeviceCache
+from agri_backend.devices import DeviceCache, mgx23_initialization
+
+
+@pytest.mark.parametrize('bits', range(16))
+def test_mgx23_initialization_requires_each_of_the_four_flags(bits):
+    # Explicit protocol masks, independent of the implementation's constants.
+    masks = (0x00000002, 0x00040000, 0x00080000, 0x00100000)
+    status = sum(mask for index, mask in enumerate(masks) if bits & (1 << index))
+    # Other bits must neither substitute a missing flag nor prevent success.
+    decoded = mgx23_initialization(status | 0x80000000)
+    assert decoded['initialized'] is (bits == 15)
+    assert [flag['active'] for flag in decoded['flags']] == [bool(bits & (1 << i)) for i in range(4)]
+
+
+def test_mgx23_unknown_expired_and_recovered_status(monkeypatch):
+    from agri_backend import devices
+    clock = [10.0]
+    monkeypatch.setattr(devices, 'monotonic', lambda: clock[0])
+    cache = DeviceCache()
+    assert cache.snapshot()['mgx23']['initialized'] is None
+    cache.update('mgx23', {'status_word': 0x001C0002})
+    assert cache.snapshot()['mgx23']['initialized'] is True
+    clock[0] += 1.01
+    expired = cache.snapshot()['mgx23']
+    assert not expired['fresh'] and expired['initialized'] is None
+    assert expired['status_word'] is None
+    assert all(flag['active'] is None for flag in expired['flags'])
+    cache.update('mgx23', {'status_word': 0})
+    assert cache.snapshot()['mgx23']['initialized'] is False
+
+
+def test_status_subscription_reaches_http_without_gnss_position(monkeypatch):
+    pytest.importorskip('rclpy')
+    pytest.importorskip('httpx')
+    from std_msgs.msg import UInt32
+    from fastapi.testclient import TestClient
+    from agri_backend import devices, main
+    cache = DeviceCache()
+    monkeypatch.setattr(devices, 'device_cache', cache)
+
+    class Node:
+        callbacks = {}
+
+        def create_subscription(self, cls, topic, callback, qos):
+            self.callbacks[topic] = callback
+
+        def create_client(self, *args):
+            return None
+
+    node = Node()
+    devices.install_ros_devices(node)
+    node.callbacks['/mgx23/status'](UInt32(data=0x001C0002))
+    response = TestClient(main.app).get('/api/devices').json()  # No ROS context/lifespan.
+    assert response['mgx23']['initialized'] is True
+    assert response['gnss']['fresh'] is False
 
 
 def test_cache_fails_unknown_instead_of_false_safe():

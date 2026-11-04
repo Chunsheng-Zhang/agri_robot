@@ -46,6 +46,7 @@ class MGX23Node(Node):
         if not math.isfinite(self.max_accuracy) or self.max_accuracy <= 0:
             raise ValueError("max_accuracy must be positive")
         self.last_device_time = None
+        self.last_status_time = None
         self.raw_session = uuid.uuid4().hex
         self.raw_sequence = 0
         self.raw_pub = self.create_publisher(String, "/mgx23/raw", 100)
@@ -248,6 +249,13 @@ class MGX23Node(Node):
     def publish_data(self, data):
         """将解析后的导航数据发布到三个 ROS 2 话题。"""
 
+        # Initialization diagnostics must remain available before position/INS
+        # accuracy qualifies for navigation. Bad checksums never reach here.
+        # A frozen device sample must not refresh the status watchdog either.
+        if math.isfinite(data['time']) and data['time'] != self.last_status_time:
+            self.status_pub.publish(UInt32(data=data['status']))
+            self.last_status_time = data['time']
+
         fields = ("time", "latitude", "longitude", "altitude", "roll", "pitch",
                   "yaw", "vel_north", "vel_east", "vel_down", "accuracy")
         if (not all(math.isfinite(data[key]) for key in fields)
@@ -290,7 +298,7 @@ class MGX23Node(Node):
         position_msg.longitude = float(data["longitude"])
         position_msg.altitude = float(data["altitude"])
 
-        # Raw tail/status is retained without interpreting its bits.
+        # Initialization flags do not establish a NavSatFix/RTK solution grade.
         position_msg.status.status = NavSatStatus.STATUS_NO_FIX
         position_msg.status.service = NavSatStatus.SERVICE_GPS
 
@@ -308,7 +316,6 @@ class MGX23Node(Node):
         velocity_stamped.header = stamped.header
         velocity_stamped.vector = velocity_msg
         self.velocity_stamped_pub.publish(velocity_stamped)
-        self.status_pub.publish(UInt32(data=data["status"]))
         self.accuracy_pub.publish(Float32(data=float(data["accuracy"])))
         self.position_pub.publish(position_msg)
 

@@ -4,6 +4,21 @@ import { Cpu, Odometer, Compass, Lightning, Location } from '@element-plus/icons
 import { useRealtime, modeText, numberText } from '../../composables/useRealtime'
 
 const { robot: state, devices, poseFresh, velocityFresh, robotFresh, safetyFresh, isFresh, refresh } = useRealtime()
+const initialization = computed(() => {
+  const status = devices.value?.mgx23
+  const fresh = isFresh(status)
+  const initialized = fresh ? status?.initialized ?? null : null
+  return {
+    text: initialized === true ? '初始化成功' : initialized === false ? '未初始化完成' : '未更新',
+    type: initialized === true ? 'success' as const : initialized === false ? 'warning' as const : 'info' as const,
+    flags: (status?.flags ?? [
+      { name: 'READY', label: '滤波器收敛', active: null },
+      { name: 'PPS_READY', label: '收到 PPS 信号', active: null },
+      { name: 'SYNC_READY', label: '时间同步成功', active: null },
+      { name: 'GNSS_CONNECT', label: '解析到 RTK 数据', active: null },
+    ]).map(flag => ({ ...flag, active: fresh ? flag.active : null })),
+  }
+})
 const robot = computed(() => {
   const pose = poseFresh.value ? state.value : null
   const gnss = isFresh(devices.value?.gnss) ? devices.value?.gnss : null
@@ -12,7 +27,7 @@ const robot = computed(() => {
     online: poseFresh.value,
     mode: safetyFresh.value ? modeText(devices.value?.safety.owner) : '控制模式未知',
     speed: velocityFresh.value ? state.value?.speed : null,
-    heading: pose?.heading, angularSpeed: pose?.angular_speed,
+    heading: pose?.heading,
     battery: robotFresh.value ? state.value?.battery : null,
     voltage: robotFresh.value ? state.value?.battery_voltage : null,
     longitude: gnss?.longitude, latitude: gnss?.latitude,
@@ -144,7 +159,19 @@ defineExpose({ refreshData: refresh })
 
     <div class="location-grid">
       <div class="location-item"><span>平面 X / Y（m）</span><strong>{{ numberText(robot.x) }} / {{ numberText(robot.y) }}</strong></div>
-      <div class="location-item"><span>角速度（rad/s）</span><strong>{{ numberText(robot.angularSpeed, 3) }}</strong></div>
+      <div class="location-item initialization-summary">
+        <span>MGX23 初始化状态</span>
+        <el-tag :type="initialization.type" size="small">{{ initialization.text }}</el-tag>
+      </div>
+    </div>
+
+    <div class="initialization-flags" aria-label="MGX23 初始化标志位">
+      <div v-for="flag in initialization.flags" :key="flag.name" class="initialization-flag">
+        <span>{{ flag.label }}</span>
+        <el-tag :type="flag.active === true ? 'success' : flag.active === false ? 'warning' : 'info'" size="small">
+          {{ flag.active === true ? '已满足' : flag.active === false ? '未满足' : '未更新' }}
+        </el-tag>
+      </div>
     </div>
 
     <el-alert
@@ -309,6 +336,27 @@ defineExpose({ refreshData: refresh })
 
 .update-alert {
   margin-top: 18px;
+}
+
+.initialization-summary {
+  align-items: flex-start;
+}
+
+.initialization-flags {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.initialization-flag {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: #65736a;
+  font-size: 12px;
 }
 
 @media (max-width: 480px) {
