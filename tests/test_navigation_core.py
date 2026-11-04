@@ -93,6 +93,26 @@ def test_pure_pursuit_recovers_cross_track_error():
     assert done and abs(y) < 0.08
 
 
+@pytest.mark.parametrize('parameters', [{'speed': 1.001}, {'speed': -1.0},
+    {'max_angular': 1.001}, {'max_angular': float('nan')}])
+def test_coverage_velocity_limits_reject_out_of_range(parameters):
+    with pytest.raises(ValueError):
+        PurePursuit(Polyline([(0, 0), (5, 0)]), **parameters)
+
+
+@pytest.mark.parametrize('offset', [-.08, .08])
+def test_coverage_curvature_preserved_at_requested_velocity_limits(offset):
+    controller = PurePursuit(Polyline([(0, 0), (5, 0)]), speed=1.0,
+        max_angular=1.0, lookahead=.1)
+    v, w, *_ = controller.command(0, offset, 0)
+    assert 0 < v <= 1.0
+    assert abs(w) == pytest.approx(1.0)
+    # At a tight curve the controller reduces forward speed, preserving curvature.
+    assert v < 1.0
+    assert math.copysign(1, w) == -math.copysign(1, offset)
+    assert controller.command(0, 0, math.pi)[:2] == (0.0, -1.0)
+
+
 @pytest.mark.parametrize('points', [[], [(0, 0)], [(0, 0), (0, 0)], [(math.nan, 0), (1, 1)]])
 def test_invalid_paths(points):
     with pytest.raises(ValueError):

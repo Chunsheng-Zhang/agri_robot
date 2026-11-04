@@ -5,6 +5,17 @@ import math
 
 from agri_base.coordinates import finite_positive, wrap_angle
 
+MAX_LINEAR_SPEED = 1.0
+MAX_ANGULAR_SPEED = 1.0
+
+
+def validate_velocity_limit(name, value):
+    value = finite_positive(value, name)
+    limit = {'speed': MAX_LINEAR_SPEED, 'max_angular': MAX_ANGULAR_SPEED}[name]
+    if value > limit:
+        raise ValueError(f'{name} must not exceed {limit}')
+    return value
+
 
 class Polyline:
     def __init__(self, points):
@@ -50,12 +61,14 @@ class Polyline:
 
 
 class PurePursuit:
-    def __init__(self, path, lookahead=0.8, speed=0.2, max_angular=0.5,
+    def __init__(self, path, lookahead=0.8, speed=0.2, max_angular=1.0,
                  completion_tolerance=0.2, search_window=1.0):
         for name in ('lookahead', 'speed', 'max_angular', 'completion_tolerance', 'search_window'):
             finite_positive(locals()[name], name)
         self.path = path
-        self.lookahead, self.speed, self.max_angular = lookahead, speed, max_angular
+        self.lookahead = lookahead
+        self.speed = validate_velocity_limit('speed', speed)
+        self.max_angular = validate_velocity_limit('max_angular', max_angular)
         self.tolerance, self.window = completion_tolerance, search_window
         self.progress = 0.0
 

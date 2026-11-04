@@ -34,6 +34,10 @@ def test_web_modes_missions_planning_recordings_and_deadman():
     try:
         until(lambda: client.get('/api/devices').json()['safety']['fresh'])
         assert client.get('/api/devices').json()['safety']['mode'] == 'base'
+        from rclpy.parameter import Parameter
+        assert system.tracker.set_parameters([Parameter('max_angular', value=1.0)])[0].successful
+        assert not system.tracker.set_parameters([Parameter('max_angular', value=1.001)])[0].successful
+        assert not system.tracker.set_parameters([Parameter('speed', value=1.001)])[0].successful
         frame = system.localization.frame
         lon, lat = frame.transformer.transform(frame.e0 + 1, frame.n0, direction=TransformDirection.INVERSE)
         waypoint = post('/api/missions', {'name': '实际接口多点测试', 'mode': 'waypoint',

@@ -5,10 +5,19 @@ import pytest
 from pyproj.enums import TransformDirection
 from pydantic import ValidationError
 
-from agri_backend.missions import Mission, MissionStore
+from agri_backend.missions import Mission, MissionStore, CoverageParameters, WaypointParameters
 from agri_base.coordinates import LocalFrame
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_coverage_accepts_new_velocity_bounds_without_changing_waypoint_bounds():
+    assert CoverageParameters(speed=1, max_angular=1).max_angular == 1
+    for values in ({'speed': 1.001}, {'speed': -1}, {'max_angular': 1.001}):
+        with pytest.raises(ValidationError):
+            CoverageParameters(**values)
+    with pytest.raises(ValidationError):
+        WaypointParameters(max_angular=5)
 
 
 @pytest.fixture

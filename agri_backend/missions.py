@@ -86,7 +86,7 @@ class CoverageParameters(StrictModel):
     path_continuity: Literal['CONTINUOUS', 'DISCONTINUOUS'] = 'CONTINUOUS'
     lookahead: float = Field(default=0.8, ge=0.1, le=10)
     speed: float = Field(default=0.2, gt=0, le=1)
-    max_angular: float = Field(default=0.5, gt=0, le=2)
+    max_angular: float = Field(default=1.0, gt=0, le=1)
     completion_tolerance: float = Field(default=0.2, ge=0.02, le=2)
     start_tolerance: float = Field(default=0.8, ge=0.05, le=5)
     search_window: float = Field(default=1, ge=0.1, le=10)

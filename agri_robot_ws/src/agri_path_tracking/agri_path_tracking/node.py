@@ -4,18 +4,19 @@ from time import monotonic
 from geometry_msgs.msg import PoseStamped, Vector3Stamped
 from nav_msgs.msg import Path
 from rclpy.qos import QoSProfile, DurabilityPolicy
+from rcl_interfaces.msg import SetParametersResult
 
 from agri_base.coordinates import finite_positive
 from agri_base.runtime import TaskNode, run, yaw_of
 from agri_base.recording import open_recording
-from .controller import Polyline
+from .controller import Polyline, validate_velocity_limit
 from .coverage import CoverageController
 
 
 class PathTracker(TaskNode):
     def __init__(self):
         super().__init__('path_tracker', 'tracking')
-        defaults = {'lookahead': 0.8, 'speed': 0.2, 'max_angular': 0.5,
+        defaults = {'lookahead': 0.8, 'speed': 0.2, 'max_angular': 1.0,
                     'completion_tolerance': 0.2, 'search_window': 1.0,
                     'start_tolerance': 0.8, 'max_path_error': 2.0,
                     'control_rate': 20.0, 'trajectory_directory': ''}
@@ -23,6 +24,8 @@ class PathTracker(TaskNode):
             self.declare_parameter(name, value)
             if isinstance(value, float):
                 finite_positive(self.get_parameter(name).value, name)
+        for name in ('speed', 'max_angular'):
+            validate_velocity_limit(name, self.get_parameter(name).value)
         self.pending_path = None
         self.controller = None
         self.record_file, self.record_writer = None, None
@@ -37,6 +40,18 @@ class PathTracker(TaskNode):
         self.path_transient = False
         self.create_timer(1.0, self.refresh_path_qos)
         self.create_timer(1 / self.get_parameter('control_rate').value, self.tick)
+
+    def configure_idle(self, parameters):
+        result = super().configure_idle(parameters)
+        if not result.successful:
+            return result
+        try:
+            for parameter in parameters:
+                if parameter.name in ('speed', 'max_angular'):
+                    validate_velocity_limit(parameter.name, parameter.value)
+        except (TypeError, ValueError) as exc:
+            return SetParametersResult(successful=False, reason=str(exc))
+        return result
 
     def refresh_path_qos(self):
         publishers = self.get_publishers_info_by_topic('/reference_path')

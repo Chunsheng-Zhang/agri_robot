@@ -63,7 +63,7 @@ path_tracker:
   ros__parameters:
     lookahead: 0.8
     speed: 0.1
-    max_angular: 0.3
+    max_angular: 1.0
     completion_tolerance: 0.2
     search_window: 1.0
     start_tolerance: 0.8
