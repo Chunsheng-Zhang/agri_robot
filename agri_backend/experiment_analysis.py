@@ -81,7 +81,7 @@ def analyze_run(directory):
     notes = [
         'Errors use the same MGX23 localization as control, not independent ground truth.',
         'Statistics use recorded samples, not distance-resampled or time-weighted samples; pauses may create gaps.',
-        'Approach and coverage tracking are evaluated separately; initial alignment remains in tracking statistics.',
+        'Approach, explicit alignment and coverage tracking are evaluated separately when separate recordings exist; legacy tracking may include initial alignment.',
         'Completion is the controller result, not proof of whole-field implement coverage.',
         'Motion series retain their own source/receipt timestamps; no speed is synthesized from position differences.',
         'MGX23 horizontal speed is unsigned hypot(N,E); chassis/cmd linear_x is signed body-forward speed.',
@@ -90,7 +90,8 @@ def analyze_run(directory):
     phase_rows = {}
     track_files = sorted((directory / 'tracks').glob('*.csv'))
     for file in track_files:
-        phase = 'approach' if file.name.startswith('approach_') else 'tracking' if file.name.startswith('track_') else 'waypoint'
+        phase = ('approach' if file.name.startswith('approach_') else 'alignment' if file.name.startswith('alignment_')
+                 else 'tracking' if file.name.startswith('track_') else 'waypoint')
         if phase in phase_rows:
             raise ValueError(f'Multiple {phase} recordings; cannot silently mix attempts')
         sidecar = json.loads(file.with_suffix('.json').read_text())
@@ -122,7 +123,8 @@ def analyze_run(directory):
         raise ValueError('Nonfinite reference path')
     primary = 'tracking' if run['mode'] == 'coverage' else 'waypoint'
     main_rows = phase_rows.get(primary, [])
-    t0 = main_rows[0]['stamp'] if main_rows else next((r[0]['stamp'] for r in phase_rows.values() if r), None)
+    t0 = main_rows[0]['stamp'] if main_rows else min(
+        (r[0]['stamp'] for r in phase_rows.values() if r), default=None)
     phases = {name: trajectory_metrics(rows) for name,rows in phase_rows.items()}
     if main_rows and reference:
         phases[primary]['final_endpoint_distance_m'] = math.hypot(main_rows[-1]['x']-reference[-1][0], main_rows[-1]['y']-reference[-1][1])
@@ -196,10 +198,17 @@ def plot_report(output, mission, run, reference, phases, motion, mgx, t0, primar
             ax.scatter(*reference[-1], c='red', marker='x', s=25, label='Reference end')
         for phase, rows in phases.items():
             if rows:
+                if phase == 'alignment':
+                    # Multiple stationary alignments can occur far apart along
+                    # the route; do not draw a fictitious joining trajectory.
+                    ax.scatter([r['x'] for r in rows], [r['y'] for r in rows],
+                               s=3, color='tab:purple', label='Alignment (separate)')
+                    continue
                 ax.plot([r['x'] for r in rows], [r['y'] for r in rows],
                     lw=.8, label='Approach (separate)' if phase == 'approach' else 'Recorded '+phase,
                     marker='.' if len(rows) < 3 else None,
-                    color='gray' if phase == 'approach' else 'tab:blue', linestyle=':' if phase == 'approach' else '-')
+                    color='gray' if phase == 'approach' else 'tab:blue',
+                    linestyle=':' if phase == 'approach' else '-')
         ax.set(title='Reference and recorded trajectory', xlabel='Map east (m)', ylabel='Map north (m)')
         ax.set_aspect('equal', adjustable='datalim')
         if reference or any(phases.values()):

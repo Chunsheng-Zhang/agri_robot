@@ -89,6 +89,8 @@ test('coverage approach and tracking share their own controls and never route to
   await c.operate('pause')
   f.devices.value.tracking.state = 'PAUSED'
   await c.operate('resume')
+  f.devices.value.tracking.phase = 'ALIGNING'
+  assert.equal(c.coveragePhase.value, 'ALIGNING')
   f.devices.value.tracking.phase = 'TRACKING'
   f.devices.value.tracking.progress = 5
   assert.equal(c.coveragePhase.value, 'TRACKING')

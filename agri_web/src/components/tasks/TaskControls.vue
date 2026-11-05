@@ -46,8 +46,9 @@ async function operate(action: 'pause' | 'resume' | 'cancel' | 'cancel_plan') {
   <div class="task-controls">
     <div><strong>{{ activeRun?.name || (kind === 'waypoint' ? '多点导航任务' : '覆盖作业任务') }}<span v-if="activeRun"> · v{{ activeRun.mission_revision }}</span></strong><el-tag type="info">{{ taskText(displayState) }}</el-tag><small>{{ activeRun?.reason || status?.reason || '任务开始后在此查看反馈' }}</small><small v-if="state && state !== 'IDLE'">用时 {{ numberText(status?.elapsed_seconds, 1) }} s（含暂停）<span v-if="progress !== null"> · {{ source === 'tracking' ? '路径任务进度' : '目标点完成进度' }} {{ numberText(progress, 1) }}%</span></small></div>
     <div v-if="coveragePhase" class="coverage-phase" role="status">
-      <strong>{{ coveragePhase === 'APPROACHING' ? '前往覆盖起点（单点导航）' : '覆盖路径跟踪' }}</strong>
-      <small v-if="coveragePhase === 'APPROACHING'">距起点 {{ numberText(status?.approach_distance, 2) }} m · 到达后自动开始覆盖路径跟踪</small>
+      <strong>{{ coveragePhase === 'APPROACHING' ? '前往覆盖起点（单点导航）' : coveragePhase === 'ALIGNING' ? '航向对齐中（原地转向）' : '覆盖路径跟踪' }}</strong>
+      <small v-if="coveragePhase === 'APPROACHING'">距起点 {{ numberText(status?.approach_distance, 2) }} m · 到达后先对齐航向，再开始覆盖跟踪</small>
+      <small v-if="coveragePhase === 'ALIGNING'">{{ status?.alignment_next_phase === 'APPROACHING' ? '接近起点方向' : '覆盖路径方向' }} · 航向误差 {{ numberText(status?.alignment_error == null ? null : status.alignment_error * 180 / Math.PI, 1) }}° · 对齐期间不前进</small>
     </div>
     <div class="buttons">
       <el-button :disabled="!canPause" @click="operate('pause')">暂停任务</el-button>

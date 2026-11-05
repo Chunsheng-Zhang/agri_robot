@@ -118,6 +118,8 @@ def test_web_modes_missions_planning_recordings_and_deadman():
         until(lambda: system.state['v'] == system.state['w'] == 0)
         assert system.safety.gate.owner == 'tracking'
         post('/api/tasks/tracking/resume')
+        assert system.tracker.controller.phase == 'ALIGNING'
+        assert system.state['v'] == 0
         until(lambda: system.state['v'] > 0)
         post('/api/tasks/tracking/cancel')
         until(lambda: system.tracker.state == 'CANCELED' and not system.safety.gate.owner)
@@ -136,6 +138,45 @@ def test_web_modes_missions_planning_recordings_and_deadman():
             assert recording['samples_by_topic']['/vel_raw'] > 0
             assert recording['samples_by_topic']['/mgx23/velocity_stamped'] > 0
             assert json.loads(data.read('analysis/status.json'))['state'] == 'SUCCEEDED'
+
+        # This fixture is explicitly isolated (Domain 200..230, localhost only).
+        # Place its synthetic vehicle at the reference start with a 90deg error
+        # to exercise real start/pause/resume services during alignment.
+        post(f'/api/missions/{coverage["id"]}/plan')
+        until(lambda: (client.get('/api/workspace').json().get('active_run') or {}).get('state') == 'READY', 30)
+        until(lambda: system.tracker.pending_path is not None)
+        from agri_base.runtime import yaw_of
+        first = system.tracker.pending_path.poses[0].pose
+        system.state.update(x=first.position.x, y=first.position.y,
+                            yaw=yaw_of(first.orientation) + math.pi/2)
+        until(lambda: math.hypot(system.tracker.odom.pose.pose.position.x-first.position.x,
+                                system.tracker.odom.pose.pose.position.y-first.position.y) < .05)
+        post(f'/api/missions/{coverage["id"]}/start')
+        until(lambda: system.tracker.state == 'RUNNING' and system.tracker.controller.phase == 'ALIGNING')
+        until(lambda: abs(system.state['w']) > .01)
+        assert system.state['v'] == 0 and abs(system.state['w']) <= .3
+        assert system.tracker.controller.progress == 0
+        post('/api/tasks/tracking/pause')
+        until(lambda: system.state['v'] == system.state['w'] == 0)
+        assert system.safety.gate.owner == 'tracking'
+        time.sleep(.6)
+        assert system.tracker.state == 'PAUSED' and system.state['v'] == 0
+        post('/api/tasks/tracking/resume')
+        assert system.tracker.controller.phase == 'ALIGNING'
+        assert system.state['v'] == 0
+        until(lambda: system.tracker.controller.phase == 'TRACKING' and system.state['v'] > 0, 20)
+        assert system.tracker.controller.progress < 1
+        post('/api/tasks/tracking/cancel')
+        until(lambda: system.tracker.state == 'CANCELED' and not system.safety.gate.owner)
+        alignment_run = client.get('/api/workspace').json()['active_run']
+        alignment_directory = system.workspace.store.run_path(alignment_run['id'])
+        until(lambda: not system.backend.workspace_ros.recorder.busy(alignment_directory))
+        import csv
+        alignment_rows = list(csv.DictReader(next((alignment_directory/'tracks').glob('alignment_*.csv')).open()))
+        assert alignment_rows and all(float(r['progress']) == 0 for r in alignment_rows)
+        alignment_metrics = json.loads((alignment_directory/'analysis/metrics.json').read_text())
+        assert alignment_metrics['phases']['alignment']['samples'] == len(alignment_rows)
+        assert alignment_metrics['phases']['tracking']['samples'] > 0
         post('/api/system/mode', {'mode': 'base'})
         until(lambda: client.get('/api/devices').json()['safety']['mode'] == 'base')
         session = post('/api/control/arm')

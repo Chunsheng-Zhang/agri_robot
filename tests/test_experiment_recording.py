@@ -82,6 +82,9 @@ def test_bounded_queue_reports_losses_and_stop_rejects_late_data(tmp_path):
 def test_analysis_four_plots_separates_phases_and_uses_real_speed_samples(tmp_path, monkeypatch):
     monkeypatch.setenv('MPLCONFIGDIR', str(tmp_path / 'mpl'))
     prepared_run(tmp_path)
+    atomic_json(tmp_path / 'tracks/alignment_test.json', {'projection': ORIGIN, 'frame_id': 'map'})
+    (tmp_path / 'tracks/alignment_test.csv').write_text(
+        'stamp,x,y,yaw,target_yaw,heading_error,progress\n99.5,0,0,1,0,-1,0\n')
     session = CaptureSession(tmp_path, 'tracking')
     session.put('motion', '/cmd_vel', [100000000000,100,100,'','/cmd_vel','base_link',.2,0,.1])
     session.put('motion', '/vel_raw', [100000000001,101,101,'','/vel_raw','base_link',.23,0,.12])
@@ -93,6 +96,8 @@ def test_analysis_four_plots_separates_phases_and_uses_real_speed_samples(tmp_pa
     assert result['phases']['tracking']['cross_track_m']['mae'] == pytest.approx(1/12)
     assert result['phases']['tracking']['heading_error_rad']['mae'] == pytest.approx(1/6)
     assert result['phases']['approach']['heading_error_rad']['mae'] == 2
+    assert result['phases']['alignment']['samples'] == 1
+    assert result['phases']['alignment']['heading_error_rad']['mae'] == 1
     assert result['motion_by_topic']['/vel_raw']['linear_x_m_s']['abs_max'] == .23
     assert '/mgx23/raw' not in result['missing_topics']
     assert '/mgx23/accuracy' in result['missing_topics']

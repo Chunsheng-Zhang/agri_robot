@@ -10,7 +10,7 @@ from agri_base.coordinates import finite_positive
 from agri_base.runtime import TaskNode, run, yaw_of
 from agri_base.recording import open_recording
 from .controller import Polyline, validate_velocity_limit
-from .coverage import CoverageController
+from .coverage import CoverageController, AlignmentTimeout
 
 
 class PathTracker(TaskNode):
@@ -19,6 +19,8 @@ class PathTracker(TaskNode):
         defaults = {'lookahead': 0.8, 'speed': 0.2, 'max_angular': 1.0,
                     'completion_tolerance': 0.2, 'search_window': 1.0,
                     'start_tolerance': 0.8, 'max_path_error': 2.0,
+                    'alignment_tolerance': math.radians(10), 'alignment_hold_time': 0.5,
+                    'alignment_max_angular': 0.3, 'alignment_timeout': 30.0,
                     'control_rate': 20.0, 'trajectory_directory': ''}
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -26,10 +28,13 @@ class PathTracker(TaskNode):
                 finite_positive(self.get_parameter(name).value, name)
         for name in ('speed', 'max_angular'):
             validate_velocity_limit(name, self.get_parameter(name).value)
+        if self.get_parameter('alignment_tolerance').value >= math.pi / 2:
+            raise ValueError('alignment_tolerance must be less than pi/2')
         self.pending_path = None
         self.controller = None
         self.record_file, self.record_writer = None, None
         self.approach_file, self.approach_writer = None, None
+        self.alignment_file, self.alignment_writer = None, None
         self.record_count = 0
         self.last_plot = -math.inf
         self.trajectory = Path()
@@ -49,9 +54,19 @@ class PathTracker(TaskNode):
             for parameter in parameters:
                 if parameter.name in ('speed', 'max_angular'):
                     validate_velocity_limit(parameter.name, parameter.value)
+                if parameter.name == 'alignment_tolerance' and parameter.value >= math.pi / 2:
+                    raise ValueError('alignment_tolerance must be less than pi/2')
         except (TypeError, ValueError) as exc:
             return SetParametersResult(successful=False, reason=str(exc))
         return result
+
+    def handle_request(self, action, response):
+        # Arm alignment before the inherited resume publishes RUNNING. The base
+        # class still checks localization and motion inhibition and owns leases.
+        if (action == 'resume' and self.state == 'PAUSED' and self.healthy()
+                and not self.motion_inhibited and self.controller is not None):
+            self.controller.align_for_resume()
+        return super().handle_request(action, response)
 
     def refresh_path_qos(self):
         publishers = self.get_publishers_info_by_topic('/reference_path')
@@ -106,7 +121,8 @@ class PathTracker(TaskNode):
         self.controller = CoverageController(line, (p.x, p.y),
             start_tolerance=self.get_parameter('start_tolerance').value,
             **{name: self.get_parameter(name).value for name in (
-            'lookahead', 'speed', 'max_angular', 'completion_tolerance', 'search_window')})
+            'lookahead', 'speed', 'max_angular', 'completion_tolerance', 'search_window',
+            'alignment_tolerance', 'alignment_hold_time', 'alignment_max_angular', 'alignment_timeout')})
         self.trajectory.poses = []
         self.last_plot = -math.inf
         self.track_pub.publish(self.trajectory)
@@ -127,6 +143,12 @@ class PathTracker(TaskNode):
                     ['stamp', 'x', 'y', 'yaw', 'cross_track', 'heading_error', 'progress'],
                     task_type='coverage_tracking',
                     approach_csv=self.approach_file.name.split('/')[-1] if self.approach_file else None)
+                self.alignment_file, self.alignment_writer = open_recording(
+                    folder, 'alignment', self.frame, points,
+                    ['stamp', 'x', 'y', 'yaw', 'target_yaw', 'heading_error', 'progress'],
+                    task_type='coverage_alignment',
+                    alignment_parameters={name: self.get_parameter(name).value for name in (
+                        'alignment_tolerance', 'alignment_hold_time', 'alignment_max_angular', 'alignment_timeout')})
             except (ValueError, OSError):
                 self.close_recording()
                 raise
@@ -138,7 +160,7 @@ class PathTracker(TaskNode):
         self.track_pub.publish(self.trajectory)
 
     def close_recording(self):
-        for stream in (self.record_file, self.approach_file):
+        for stream in (self.record_file, self.approach_file, self.alignment_file):
             if stream is not None:
                 try:
                     stream.close()
@@ -146,6 +168,7 @@ class PathTracker(TaskNode):
                     self.get_logger().error(f'Trajectory save failed: {exc}')
         self.record_file, self.record_writer = None, None
         self.approach_file, self.approach_writer = None, None
+        self.alignment_file, self.alignment_writer = None, None
 
     def destroy_node(self):
         self.close_recording()
@@ -155,8 +178,16 @@ class PathTracker(TaskNode):
         if self.ready_to_step():
             pose = self.odom.pose.pose
             yaw = yaw_of(pose.orientation)
-            recording_approach = self.controller.phase == 'APPROACHING'
-            v, w, distance, lateral, heading, done = self.controller.command(pose.position.x, pose.position.y, yaw)
+            recording_phase = self.controller.phase
+            try:
+                stamp = self.odom.header.stamp
+                v, w, distance, lateral, heading, done = self.controller.command(
+                    pose.position.x, pose.position.y, yaw,
+                    sample_stamp=stamp.sec + stamp.nanosec * 1e-9)
+            except AlignmentTimeout as exc:
+                self.finish('FAULT', str(exc))
+                self.publish_status()
+                return
             error = Vector3Stamped()
             error.header.frame_id = 'map'
             error.header.stamp = self.get_clock().now().to_msg()
@@ -170,16 +201,23 @@ class PathTracker(TaskNode):
                 stamped.pose = pose
                 self.trajectory.poses.append(stamped)
                 self.trajectory.poses = self.trajectory.poses[-10000:]
-                writer = self.approach_writer if recording_approach else self.record_writer
+                writer, stream = {'APPROACHING': (self.approach_writer, self.approach_file),
+                                  'ALIGNING': (self.alignment_writer, self.alignment_file),
+                                  'TRACKING': (self.record_writer, self.record_file)}[recording_phase]
                 if writer is not None:
                     try:
                         values = [self.odom.header.stamp.sec + self.odom.header.stamp.nanosec * 1e-9,
                                   pose.position.x, pose.position.y, yaw]
-                        writer.writerow(values + ([0, self.controller.distance_to_start, heading]
-                            if recording_approach else [lateral, heading, self.controller.progress]))
+                        if recording_phase == 'ALIGNING':
+                            values += [self.controller.alignment_yaw, heading, self.controller.progress]
+                        elif recording_phase == 'APPROACHING':
+                            values += [0, self.controller.distance_to_start, heading]
+                        else:
+                            values += [lateral, heading, self.controller.progress]
+                        writer.writerow(values)
                         self.record_count += 1
                         if self.record_count % 20 == 0:
-                            (self.approach_file if recording_approach else self.record_file).flush()
+                            stream.flush()
                     except OSError as exc:
                         self.finish('FAULT', f'Trajectory write failed: {exc}')
                         return
@@ -209,6 +247,8 @@ class PathTracker(TaskNode):
         controller = self.controller
         super().publish_status(
             phase=controller.phase if controller else 'IDLE',
+            alignment_error=controller.alignment_error if controller and controller.phase == 'ALIGNING' else None,
+            alignment_next_phase=controller.alignment_next_phase if controller and controller.phase == 'ALIGNING' else None,
             approach_distance=controller.distance_to_start if controller and controller.phase == 'APPROACHING' else None,
             approach_target={'x': controller.target[0], 'y': controller.target[1]} if controller else None,
             progress=controller.progress if controller else 0.0,

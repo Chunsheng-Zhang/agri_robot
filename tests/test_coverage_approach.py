@@ -14,16 +14,18 @@ def test_distant_start_approaches_first_point_before_tracking(start):
     assert controller.phase == 'APPROACHING'
     x, y, yaw = start
     transitioned = False
-    for _ in range(6000):
+    for step in range(6000):
         phase = controller.phase
-        v, w, deviation, _, _, done = controller.command(x, y, yaw)
+        v, w, deviation, _, _, done = controller.command(x, y, yaw, now=step*.05)
         assert 0 <= v <= .5 and abs(w) <= .3 + 1e-9
         if phase == 'APPROACHING':
             assert not done and controller.progress == 0
-            if controller.phase == 'TRACKING':
+            if controller.phase == 'ALIGNING':
                 transitioned = True
                 assert v == w == 0
                 assert math.hypot(x - 1, y) <= .15
+        if phase == 'ALIGNING':
+            assert v == 0 and controller.progress == 0
         if done:
             break
         x += v * math.cos(yaw) * .05
@@ -36,8 +38,10 @@ def test_distant_start_approaches_first_point_before_tracking(start):
 def test_near_start_skips_approach_without_completing_a_loop():
     line = Polyline([(0, 0), (3, 0), (3, 1), (0, 1), (0, 0)])
     controller = CoverageController(line, (.1, 0))
-    assert controller.phase == 'TRACKING' and controller.approach_path is None
-    assert not controller.command(.1, 0, 0)[-1]
+    assert controller.phase == 'ALIGNING' and controller.approach_path is None
+    assert not controller.command(.1, 0, 0, now=0)[-1]
+    assert not controller.command(.1, 0, 0, now=.5)[-1]
+    assert controller.phase == 'TRACKING'
     assert controller.progress < .2
 
 
@@ -56,7 +60,7 @@ def test_tight_start_tolerance_is_respected_at_handover():
     assert not controller.command(-.04, 0, 0)[-1]
     assert controller.phase == 'APPROACHING'
     assert controller.command(-.02, 0, 0)[:2] == (0, 0)
-    assert controller.phase == 'TRACKING'
+    assert controller.phase == 'ALIGNING'
 
 
 def test_approach_speed_can_be_lower_than_waypoint_default_minimum():
