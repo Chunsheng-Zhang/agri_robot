@@ -19,6 +19,14 @@ const initialization = computed(() => {
     ]).map(flag => ({ ...flag, active: fresh ? flag.active : null })),
   }
 })
+const gnssFlags = computed(() => {
+  const status = devices.value?.mgx23
+  const fresh = isFresh(status)
+  return (status?.gnss_flags ?? [
+    { name: 'GNSS_REJECT', label: 'GNSS 数据差', active: null },
+    { name: 'GNSS_LOST', label: 'GNSS 数据无效', active: null },
+  ]).map(flag => ({ ...flag, active: fresh ? flag.active : null }))
+})
 const robot = computed(() => {
   const pose = poseFresh.value ? state.value : null
   const gnss = isFresh(devices.value?.gnss) ? devices.value?.gnss : null
@@ -173,6 +181,16 @@ defineExpose({ refreshData: refresh })
         </el-tag>
       </div>
     </div>
+
+    <div class="initialization-flags" aria-label="GNSS 异常标志位">
+      <div v-for="flag in gnssFlags" :key="flag.name" class="initialization-flag">
+        <span>{{ flag.label }}</span>
+        <el-tag :type="flag.active === true ? 'danger' : 'info'" size="small">
+          {{ flag.active === true ? '已置位' : flag.active === false ? '未置位' : '未更新' }}
+        </el-tag>
+      </div>
+    </div>
+    <p class="gnss-flag-note">已置位表示设备报告异常；未置位不代表卫星信号良好或 RTK 固定解。</p>
 
     <el-alert
       class="update-alert"
@@ -358,6 +376,8 @@ defineExpose({ refreshData: refresh })
   color: #65736a;
   font-size: 12px;
 }
+
+.gnss-flag-note { margin: 10px 0 0; color: #85938a; font-size: 12px; line-height: 1.6; }
 
 @media (max-width: 480px) {
   .status-value {

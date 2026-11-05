@@ -113,6 +113,7 @@ export interface DevicesResponse {
     status_word: number | null
     initialized: boolean | null
     flags: { name: string; label: string; mask: number; active: boolean | null }[]
+    gnss_flags?: { name: string; label: string; mask: number; active: boolean | null }[]
   }
   voltage?: Snapshot & { volts?: number }
   scan?: Snapshot & { frame_id: string; points: PathPoint[]; range_max: number | null }

@@ -19,6 +19,10 @@ MGX23_INIT_FLAGS = (
     ('GNSS_CONNECT', '解析到 RTK 数据', 0x00100000),
 )
 MGX23_INIT_MASK = sum(mask for _, _, mask in MGX23_INIT_FLAGS)
+MGX23_GNSS_FLAGS = (
+    ('GNSS_REJECT', 'GNSS 数据差', 0x00000010),
+    ('GNSS_LOST', 'GNSS 数据无效', 0x00010000),
+)
 
 
 def mgx23_initialization(status):
@@ -29,6 +33,9 @@ def mgx23_initialization(status):
         'flags': [{'name': name, 'label': label, 'mask': mask,
                    'active': bool(status & mask) if known else None}
                   for name, label, mask in MGX23_INIT_FLAGS],
+        'gnss_flags': [{'name': name, 'label': label, 'mask': mask,
+                        'active': bool(status & mask) if known else None}
+                       for name, label, mask in MGX23_GNSS_FLAGS],
     }
 
 

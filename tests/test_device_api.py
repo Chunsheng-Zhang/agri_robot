@@ -20,12 +20,24 @@ def test_mgx23_initialization_requires_each_of_the_four_flags(bits):
     assert [flag['active'] for flag in decoded['flags']] == [bool(bits & (1 << i)) for i in range(4)]
 
 
+@pytest.mark.parametrize('bits', range(4))
+def test_mgx23_gnss_error_flags_do_not_change_initialization_rule(bits):
+    status = 0x001C0002 | (0x10 if bits & 1 else 0) | (0x10000 if bits & 2 else 0)
+    decoded = mgx23_initialization(status)
+    assert decoded['initialized'] is True
+    assert decoded['gnss_flags'] == [
+        {'name': 'GNSS_REJECT', 'label': 'GNSS 数据差', 'mask': 0x10, 'active': bool(bits & 1)},
+        {'name': 'GNSS_LOST', 'label': 'GNSS 数据无效', 'mask': 0x10000, 'active': bool(bits & 2)},
+    ]
+
+
 def test_mgx23_unknown_expired_and_recovered_status(monkeypatch):
     from agri_backend import devices
     clock = [10.0]
     monkeypatch.setattr(devices, 'monotonic', lambda: clock[0])
     cache = DeviceCache()
     assert cache.snapshot()['mgx23']['initialized'] is None
+    assert all(flag['active'] is None for flag in cache.snapshot()['mgx23']['gnss_flags'])
     cache.update('mgx23', {'status_word': 0x001C0002})
     assert cache.snapshot()['mgx23']['initialized'] is True
     clock[0] += 1.01
@@ -33,8 +45,10 @@ def test_mgx23_unknown_expired_and_recovered_status(monkeypatch):
     assert not expired['fresh'] and expired['initialized'] is None
     assert expired['status_word'] is None
     assert all(flag['active'] is None for flag in expired['flags'])
-    cache.update('mgx23', {'status_word': 0})
+    assert all(flag['active'] is None for flag in expired['gnss_flags'])
+    cache.update('mgx23', {'status_word': 0x10010})
     assert cache.snapshot()['mgx23']['initialized'] is False
+    assert all(flag['active'] is True for flag in cache.snapshot()['mgx23']['gnss_flags'])
 
 
 def test_status_subscription_reaches_http_without_gnss_position(monkeypatch):
@@ -57,9 +71,10 @@ def test_status_subscription_reaches_http_without_gnss_position(monkeypatch):
 
     node = Node()
     devices.install_ros_devices(node)
-    node.callbacks['/mgx23/status'](UInt32(data=0x001C0002))
+    node.callbacks['/mgx23/status'](UInt32(data=0x001C0002 | 0x10010))
     response = TestClient(main.app).get('/api/devices').json()  # No ROS context/lifespan.
     assert response['mgx23']['initialized'] is True
+    assert all(flag['active'] is True for flag in response['mgx23']['gnss_flags'])
     assert response['gnss']['fresh'] is False
 
 
