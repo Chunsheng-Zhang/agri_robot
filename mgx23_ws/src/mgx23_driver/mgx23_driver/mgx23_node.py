@@ -34,6 +34,7 @@ class MGX23Node(Node):
             "transport": "tcp", "device_ip": "172.16.1.250",
             "port": 9000, "bind_address": "0.0.0.0",
             "max_accuracy": 0.5,
+            "receive_timeout": 3.0,
             "raw_log_directory": "",
         }.items():
             self.declare_parameter(name, default)
@@ -45,6 +46,10 @@ class MGX23Node(Node):
         self.max_accuracy = float(self.get_parameter("max_accuracy").value)
         if not math.isfinite(self.max_accuracy) or self.max_accuracy <= 0:
             raise ValueError("max_accuracy must be positive")
+        self.receive_timeout = float(self.get_parameter("receive_timeout").value)
+        if not math.isfinite(self.receive_timeout) or self.receive_timeout <= 0:
+            raise ValueError("receive_timeout must be positive")
+        self.last_receive_monotonic = None
         self.last_device_time = None
         self.last_status_time = None
         self.raw_session = uuid.uuid4().hex
@@ -130,6 +135,7 @@ class MGX23Node(Node):
             sock.setblocking(False)
 
             self.sock = sock
+            self.last_receive_monotonic = time.monotonic()
             self.buffer.clear()
             self.last_device_time = None
 
@@ -170,6 +176,7 @@ class MGX23Node(Node):
                 self.close_socket()
                 return
 
+            self.last_receive_monotonic = time.monotonic()
             if self.raw_log is not None:
                 try:
                     self.raw_log.write(chunk)
@@ -196,7 +203,15 @@ class MGX23Node(Node):
             self.buffer.extend(chunk)
 
         except BlockingIOError:
-            # 当前没有新数据
+            # A powered/reconnected device can leave a TCP session established
+            # without ever delivering more bytes. Reconnect that stale session;
+            # receiving bytes still does not qualify a navigation solution.
+            if (self.transport == "tcp" and self.last_receive_monotonic is not None
+                    and time.monotonic() - self.last_receive_monotonic >= self.receive_timeout):
+                self.get_logger().warning(
+                    f"MGX23 received no data for {self.receive_timeout:g}s; reconnecting."
+                )
+                self.close_socket()
             return
 
         except OSError as exc:
@@ -331,6 +346,7 @@ class MGX23Node(Node):
             self.sock = None
 
         self.buffer.clear()
+        self.last_receive_monotonic = None
 
     def destroy_node(self):
         """退出节点时释放 TCP 连接。"""

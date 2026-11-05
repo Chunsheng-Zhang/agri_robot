@@ -1,7 +1,9 @@
 """Exercise real ROS message construction and stream decoding without a socket/node."""
 
 import struct
+import time
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from builtin_interfaces.msg import Time
 from mgx23_driver.mgx23_node import MGX23Node
@@ -21,11 +23,14 @@ class Publisher:
 class Harness:
     receive_data = MGX23Node.receive_data
     publish_data = MGX23Node.publish_data
+    close_socket = MGX23Node.close_socket
 
     def __init__(self, chunk):
         self.buffer = bytearray()
         self.sock = SimpleNamespace(recv=lambda size: chunk)
         self.transport = 'tcp'
+        self.receive_timeout = 3.0
+        self.last_receive_monotonic = time.monotonic()
         self.last_device_time = None
         self.last_status_time = None
         self.raw_log = None
@@ -130,3 +135,35 @@ def test_invalid_device_time_cannot_refresh_status():
     h = Harness(frame(device_time=float('nan'), status=0x001C0002))
     h.receive_data()
     assert not h.status_pub.messages
+
+
+def test_silent_tcp_session_closes_then_reconnects_without_publishing_pose():
+    h = Harness(b'')
+    old_socket = Mock()
+    old_socket.recv.side_effect = BlockingIOError
+    h.sock = old_socket
+    h.last_receive_monotonic = 10.0
+    h.buffer.extend(b'fmi')
+    h.connect_device = Mock()
+    with patch('mgx23_driver.mgx23_node.time.monotonic', return_value=12.9):
+        h.receive_data()
+    old_socket.close.assert_not_called()
+    with patch('mgx23_driver.mgx23_node.time.monotonic', return_value=13.0):
+        h.receive_data()
+    old_socket.close.assert_called_once()
+    assert h.sock is None and not h.buffer
+    assert h.last_receive_monotonic is None
+    h.receive_data()
+    h.connect_device.assert_called_once()
+    assert not h.position_pub.messages
+
+
+def test_receiving_invalid_navigation_still_refreshes_transport_watchdog():
+    h = Harness(frame(accuracy=-1))
+    h.last_receive_monotonic = 10.0
+    with patch('mgx23_driver.mgx23_node.time.monotonic', return_value=20.0):
+        h.receive_data()
+    assert h.last_receive_monotonic == 20.0
+    assert h.sock is not None
+    assert len(h.status_pub.messages) == 1
+    assert not h.position_pub.messages
