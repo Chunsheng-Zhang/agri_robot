@@ -1045,3 +1045,14 @@ except ImportError:
     sys.path.insert(0, str(FilePath(__file__).resolve().parent.parent))
     from agri_backend.workspace import install_routes as install_workspace_routes
 install_workspace_routes(app, require_ros_bridge, robot_state.snapshot)
+
+from agri_backend.experiment_communication import CommunicationMiddleware
+
+
+def current_experiment_capture():
+    bridge = get_ros_bridge()
+    recorder = getattr(getattr(getattr(bridge, 'node', None), 'workspace_ros', None), 'recorder', None)
+    return recorder.session if recorder is not None else None
+
+
+app.add_middleware(CommunicationMiddleware, session_getter=current_experiment_capture)

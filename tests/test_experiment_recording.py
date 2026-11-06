@@ -74,9 +74,28 @@ def test_bounded_queue_reports_losses_and_stop_rejects_late_data(tmp_path):
     session.queue.put_nowait = full
     session.put('raw', '/mgx23/raw', ([], '{}'))
     assert session.dropped['/mgx23/raw'] == 1
+    assert len(session.drop_events) == 1
     finish(session)
+    manifest=json.loads((tmp_path/'telemetry/recording.json').read_text())
+    assert len(manifest['queue_drop_events']) == 1
+    assert manifest['queue_drop_events_truncated'] == 0
     session.put('raw', '/mgx23/raw', ([], '{}'))
     assert session.dropped['/mgx23/raw'] == 1
+
+
+def test_queue_drop_event_memory_is_bounded_but_total_is_preserved(tmp_path):
+    from queue import Full
+    session=CaptureSession(tmp_path,'tracking')
+    def full(item):
+        raise Full
+    session.queue.put_nowait=full
+    for _ in range(1005):
+        session.put('raw','/mgx23/raw',([], '{}'))
+    finish(session)
+    manifest=json.loads((tmp_path/'telemetry/recording.json').read_text())
+    assert manifest['queue_drops_by_topic']['/mgx23/raw']==1005
+    assert len(manifest['queue_drop_events'])==1000
+    assert manifest['queue_drop_events_truncated']==5
 
 
 def test_analysis_four_plots_separates_phases_and_uses_real_speed_samples(tmp_path, monkeypatch):
@@ -106,6 +125,17 @@ def test_analysis_four_plots_separates_phases_and_uses_real_speed_samples(tmp_pa
     for name in ('trajectory','speed','cross_track_error','heading_error'):
         assert (tmp_path / f'analysis/{name}.png').is_file()
     assert (tmp_path / 'analysis/metrics.csv').is_file()
+    assert result['communication']['available'] is True
+    assert result['tracking_assessment']['subsets']['all_tracking']['samples'] == 3
+    assert (tmp_path / 'analysis/communication.json').is_file()
+    for name in ('communication_loss.png','communication_latency.png'):
+        assert (tmp_path/'analysis'/name).stat().st_size > 10000
+    assert (tmp_path/'analysis/communication_plot_data.json').is_file()
+    report = (tmp_path / 'analysis/report.md').read_text()
+    assert '本轮实验结果汇总' in report and '横向均值 cm' in report
+    assert '全部正式跟踪 | 3' in report
+    assert '未测' in report and '不是 IP 丢包率' in report
+    assert '(communication_loss.png)' in report and '(communication_latency.png)' in report
     assert json.loads((tmp_path / 'analysis/status.json').read_text())['state'] == 'SUCCEEDED'
 
 

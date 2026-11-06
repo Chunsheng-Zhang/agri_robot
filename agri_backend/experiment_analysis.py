@@ -31,14 +31,16 @@ def number(value):
 def statistics(values):
     values = [v for v in values if v is not None and math.isfinite(v)]
     if not values:
-        return {'samples': 0, 'mean': None, 'mae': None, 'rmse': None, 'abs_p95': None, 'abs_max': None}
+        return dict(samples=0, **{k:None for k in ('mean','mae','rmse','std','abs_median','abs_p95','abs_p99','abs_max')})
     absolute = sorted(abs(v) for v in values)
-    position = .95 * (len(values) - 1)
-    lo = int(position)
-    percentile = absolute[lo] + (absolute[min(lo + 1, len(values) - 1)] - absolute[lo]) * (position - lo)
-    return {'samples': len(values), 'mean': sum(values) / len(values),
+    def percentile(p):
+        position = p * (len(values) - 1)
+        lo = int(position)
+        return absolute[lo] + (absolute[min(lo + 1, len(values) - 1)] - absolute[lo]) * (position - lo)
+    mean=sum(values)/len(values)
+    return {'samples': len(values), 'mean': mean, 'std':math.sqrt(sum((v-mean)**2 for v in values)/len(values)),
             'mae': sum(absolute) / len(values), 'rmse': math.sqrt(sum(v*v for v in values) / len(values)),
-            'abs_p95': percentile, 'abs_max': absolute[-1]}
+            'abs_median':percentile(.5), 'abs_p95': percentile(.95), 'abs_p99':percentile(.99), 'abs_max': absolute[-1]}
 
 
 def trajectory(rows):
@@ -151,28 +153,51 @@ def analyze_run(directory):
         notes.append('Missing recorded topics: ' + ', '.join(missing))
     if capture.get('queue_drops_by_topic') or capture.get('errors') or capture.get('raw_sequence_gaps'):
         notes.append('Capture reports drops/errors/raw sequence gaps; inspect telemetry/recording.json.')
-    metrics = {'schema_version': 1, 'run_id': run['id'], 'generated_at': now(),
+    from .experiment_communication import analyze_communication
+    from .experiment_summary import tracking_assessment, write_summary
+    from .communication_plots import build_plot_data, plot_communication
+    try:
+        communication=analyze_communication(directory,capture)
+    except (OSError, ValueError, KeyError) as exc:
+        communication={'available':False,'reason':f'通信分析失败，不能宣称零丢包/零延时：{exc}'}
+        notes.append(communication['reason'])
+    assessment=tracking_assessment(directory,mission,run,reference,phase_rows,motion,mgx,statistics)
+    plot_data=build_plot_data(directory,communication,capture,t0,run['mode'],primary if main_rows else None)
+    communication['plots']={'loss':'communication_loss.png','latency':'communication_latency.png',
+        'data':'communication_plot_data.json','time_origin_ros_s':plot_data['time_origin_ros_s'],
+        'time_origin_reference':plot_data['time_origin_reference'],
+        'loss_window_s':plot_data['loss_window_s'],'latency_window_s':plot_data['latency_window_s']}
+    metrics = {'schema_version': 2, 'run_id': run['id'], 'generated_at': now(),
         'task_state': terminal.get('state', run['state']), 'mode': run['mode'],
         'projection': run['projection'], 'position_reference': 'base_link', 'sources': sources,
         'reference_points': len(reference),
         'reference_polyline_length_m': sum(math.dist(a,b) for a,b in zip(reference,reference[1:])),
         'phases': phases, 'motion_by_topic': speeds,
         'telemetry_counts': dict(Counter(r['topic'] for r in mgx)),
-        'missing_topics': missing, 'capture': capture, 'notes': notes}
+        'missing_topics': missing, 'capture': capture, 'communication':communication,
+        'tracking_assessment':assessment, 'notes': notes}
     atomic_json(output / 'metrics.json', metrics)
+    atomic_json(output / 'communication.json', communication)
+    atomic_json(output / 'communication_plot_data.json', plot_data)
+    if communication['available']:
+        atomic_json(directory / 'communication/summary.json', communication)
     with (output / 'metrics.csv').open('w', encoding='utf-8', newline='') as file:
         writer = csv.writer(file)
-        writer.writerow(['phase', 'indicator', 'unit', 'samples', 'mean', 'mae', 'rmse', 'abs_p95', 'abs_max'])
+        writer.writerow(['phase', 'indicator', 'unit', 'samples', 'mean', 'mae', 'rmse', 'abs_p95', 'abs_max','std','abs_median','abs_p99'])
         for phase, values in phases.items():
             for name, unit in (('cross_track_m', 'm'), ('target_distance_m', 'm'), ('heading_error_rad', 'rad'), ('heading_error_deg', 'deg')):
                 item = values[name]
                 if item['samples']:
-                    writer.writerow([phase, name, unit] + [item[k] for k in ('samples','mean','mae','rmse','abs_p95','abs_max')])
+                    writer.writerow([phase, name, unit] + [item[k] for k in ('samples','mean','mae','rmse','abs_p95','abs_max','std','abs_median','abs_p99')])
     # Matplotlib is used only in this background/offline worker; never on the control path.
     with PLOT_LOCK:
         plot_report(output, mission, {**run, 'state': metrics['task_state']}, reference, phase_rows, motion, mgx, t0, primary)
-    lines = ['# Task analysis', '', f'Run: `{run["id"]}`', f'State: `{metrics["task_state"]}`', '',
+        plot_communication(output,plot_data,communication,run['id'])
+    write_summary(directory,mission,metrics)
+    lines = ['# Task analysis', '', '[本轮实验结果汇总与跟踪精度评价](report.md)', '', f'Run: `{run["id"]}`', f'State: `{metrics["task_state"]}`', '',
              '![Trajectory, speed, lateral and heading error](trajectory_and_speed.png)', '',
+             '![Observed message missing ratios](communication_loss.png)', '',
+             '![Message age and backend handling latency](communication_latency.png)', '',
              '## Data and limitations', '', *['- ' + note for note in notes], '',
              'Detailed per-phase statistics: `metrics.json` and `metrics.csv`.',
              'Raw capture integrity: `../telemetry/recording.json`.', '']

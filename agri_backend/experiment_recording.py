@@ -24,6 +24,10 @@ MGX_COLUMNS = ['received_ros_ns', 'received_unix_ns', 'received_monotonic_ns',
                'source_stamp_ns', 'topic', 'frame_id', 'v1', 'v2', 'v3', 'status']
 ODOM_COLUMNS = ['received_ros_ns', 'received_unix_ns', 'received_monotonic_ns',
                 'source_stamp_ns', 'frame_id', 'x', 'y', 'yaw', 'angular_z']
+TIMING_COLUMNS = ['received_ros_ns', 'received_unix_ns', 'received_monotonic_ns',
+                  'topic', 'source_stamp_ns', 'source_age_ms']
+HTTP_COLUMNS = ['received_unix_ns', 'received_monotonic_ns', 'method', 'path',
+                'status', 'duration_ms', 'outcome']
 
 
 class CaptureSession:
@@ -39,6 +43,7 @@ class CaptureSession:
         self.armed_at = monotonic()
         self.seen_active = False
         self.dropped = Counter()
+        self.drop_events, self.drop_events_truncated = [], 0
         self.counts, self.errors = Counter(), []
         self.raw_gaps, self.raw_sessions, self.last_raw = [], [], None
         self.raw_size = 0
@@ -48,6 +53,7 @@ class CaptureSession:
             (self.directory / 'raw').mkdir(exist_ok=True)
             (self.directory / 'telemetry').mkdir(exist_ok=True)
             (self.directory / 'analysis').mkdir(exist_ok=True)
+            (self.directory / 'communication').mkdir(exist_ok=True)
             self.raw = self.open_file('raw/mgx23.bin', 'xb')
             self.chunks = self.csv_file('raw/chunks.csv', ['offset', 'size', 'session', 'sequence',
                 'source_ros_ns', 'source_unix_ns', 'received_ros_ns', 'received_unix_ns', 'transport'])
@@ -55,6 +61,19 @@ class CaptureSession:
             self.mgx = self.csv_file('telemetry/mgx23.csv', MGX_COLUMNS)
             self.odom = self.csv_file('telemetry/odometry.csv', ODOM_COLUMNS)
             self.events = self.open_file('telemetry/status.jsonl', 'x')
+            self.timing = self.csv_file('communication/ros_timing.csv', TIMING_COLUMNS)
+            self.http = self.csv_file('communication/http_server.csv', HTTP_COLUMNS)
+            atomic_json(self.directory / 'communication/metadata.json', {
+                'schema_version': 1, 'started_at': self.started_at,
+                'scope': 'Driver-to-recorder ROS delivery and backend application HTTP handling',
+                'observer_qos': 'raw/status: RELIABLE depth 100; motion/MGX/odom/scan/joy: sensor_data BEST_EFFORT',
+                'latency_reference_ms': 100, 'http_reference_ms': 2000,
+                'notes': ['Raw sequence is generated after bytes reach the MGX23 driver, not by the device.',
+                    'Negative source ages indicate clock anomalies and are excluded from latency distributions.',
+                    'Headerless messages have no measured source-to-receiver latency.',
+                    'HTTP duration excludes browser/proxy/network round trip. HTTP failures are not IP packet loss.',
+                    'No active ping, packet capture, camera stream or motion is started by this recorder.'],
+            })
             self.write_manifest('RECORDING')
         except Exception:
             for file in self.files:
@@ -82,6 +101,10 @@ class CaptureSession:
                 self.queue.put_nowait((kind, topic, payload))
             except Full:
                 self.dropped[topic] += 1
+                if len(self.drop_events) < 1000:
+                    self.drop_events.append({'received_monotonic_ns': monotonic_ns(), 'topic': topic})
+                else:
+                    self.drop_events_truncated += 1
 
     def request_stop(self, state, reason='', tail=0.5):
         with self.lock:
@@ -98,8 +121,11 @@ class CaptureSession:
             'schema_version': 1, 'state': state, 'started_at': self.started_at,
             'updated_at': now(), 'terminal': self.terminal, 'source': self.source,
             'samples_by_topic': dict(self.counts), 'queue_drops_by_topic': dict(self.dropped),
+            'queue_drop_events': list(self.drop_events), 'queue_drop_events_truncated': self.drop_events_truncated,
             'errors': self.errors, 'raw_bytes': self.raw_size,
             'raw_sequence_gaps': self.raw_gaps, 'raw_sessions': self.raw_sessions,
+            'communication': {'metadata': 'communication/metadata.json', 'timing': 'communication/ros_timing.csv',
+                              'http_server': 'communication/http_server.csv'},
             'notes': ['Capture begins before the explicit Web start service request.',
                 'Unstamped Twist messages have receipt time only; source_stamp_ns is empty.',
                 'MGX23 CSV v1/v2/v3: position=lat/lon/alt; attitude=roll/pitch/north-clockwise yaw (rad); velocity=north/east/down (m/s).',
@@ -127,6 +153,12 @@ class CaptureSession:
             value['unix_ns'], receipt[0], receipt[1], value['transport']])
         self.raw_size += len(raw)
         self.last_raw = session, sequence
+        self.write_timing(receipt, '/mgx23/raw', value['stamp_ns'])
+
+    def write_timing(self, receipt, topic, stamp=''):
+        source = int(stamp) if stamp not in ('', None) else 0
+        age = (int(receipt[0])-source)/1e6 if source > 0 else ''
+        self.timing.writerow(list(receipt) + [topic, source or '', age])
 
     def write_loop(self):
         last_flush = monotonic()
@@ -144,8 +176,16 @@ class CaptureSession:
                             self.write_raw(*payload)
                         elif kind == 'event':
                             self.events.write(json.dumps({'topic': topic, **payload}, allow_nan=False) + '\n')
+                            stamp=payload['data'].get('stamp')
+                            stamp=int(stamp*1e9) if isinstance(stamp,(float,int)) and math.isfinite(stamp) else 0
+                            self.write_timing([payload['received_ros_ns'], payload.get('received_unix_ns', ''),
+                                payload.get('received_monotonic_ns', '')], topic, stamp)
+                        elif kind == 'timing':
+                            self.write_timing(payload[:3], topic, payload[3])
                         else:
                             getattr(self, kind).writerow(payload)
+                            if kind in ('motion', 'mgx', 'odom'):
+                                self.write_timing(payload[:3], topic, payload[3])
                         self.counts[topic] += 1
                     except (ValueError, KeyError, TypeError) as exc:
                         if len(self.errors) < 100:
@@ -179,7 +219,7 @@ class ExperimentRecorder:
     def __init__(self, node):
         from geometry_msgs.msg import Twist, TwistStamped, Vector3Stamped
         from nav_msgs.msg import Odometry
-        from sensor_msgs.msg import NavSatFix
+        from sensor_msgs.msg import NavSatFix, LaserScan, Joy
         from std_msgs.msg import String, Float32, UInt32
         from rclpy.qos import qos_profile_sensor_data
         self.node, self.session = node, None
@@ -201,6 +241,8 @@ class ExperimentRecorder:
         for cls, topic in ((Float32, '/mgx23/accuracy'), (UInt32, '/mgx23/status')):
             sub(cls, topic, lambda msg, t=topic: self.on_scalar(t, msg), qos_profile_sensor_data)
         sub(Odometry, '/odom', self.on_odom, qos_profile_sensor_data)
+        for cls, topic in ((LaserScan, '/scan'), (Joy, '/joy')):
+            sub(cls, topic, lambda msg, t=topic: self.put('timing', t, self.receipt()+[self.stamp(msg)]), qos_profile_sensor_data)
         for topic in ('/tracking/status', '/waypoint/status', '/safety/status', '/safety/events'):
             sub(String, topic, lambda msg, t=topic: self.on_status(t, msg))
         self.timer = node.create_timer(0.1, self.tick)
@@ -282,7 +324,8 @@ class ExperimentRecorder:
             value = json.loads(msg.data)
             if not isinstance(value, dict):
                 return
-            self.put('event', topic, {'received_ros_ns': self.receipt()[0], 'data': value})
+            receipt = self.receipt()
+            self.put('event', topic, dict(zip(('received_ros_ns', 'received_unix_ns', 'received_monotonic_ns'), receipt), data=value))
             if topic != f'/{session.source}/status':
                 return
             # Reject periodic/latched status from an old run or controller.

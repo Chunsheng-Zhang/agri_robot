@@ -138,6 +138,14 @@ def test_web_modes_missions_planning_recordings_and_deadman():
             assert recording['samples_by_topic']['/vel_raw'] > 0
             assert recording['samples_by_topic']['/mgx23/velocity_stamped'] > 0
             assert json.loads(data.read('analysis/status.json'))['state'] == 'SUCCEEDED'
+            assert data.read('analysis/report.md').decode().startswith('# 本轮实验结果汇总')
+            communication = json.loads(data.read('analysis/communication.json'))
+            assert communication['available']
+            assert communication['topics']['/mgx23/velocity_stamped']['received'] > 0
+            assert data.read('communication/ros_timing.csv')
+            assert data.read('communication/http_server.csv')
+            assert len(data.read('analysis/communication_loss.png')) > 10000
+            assert len(data.read('analysis/communication_latency.png')) > 10000
 
         # This fixture is explicitly isolated (Domain 200..230, localhost only).
         # Place its synthetic vehicle at the reference start with a 90deg error
