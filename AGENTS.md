@@ -45,6 +45,7 @@
 - 后端使用 `agri_backend/.venv/bin/python`；前端位于 `agri_web/`，通常使用端口 5173，后端端口 8000，视频服务端口 8080。
 - 开机后一键入口为 `bash /home/jetson/agri_robot/scripts/project.bash start`，支持 `status`、`stop`；后台管理核心、后端和网页，不自动解除急停或开始任务，不自动配置系统开机自启。已有外部启动的服务只识别、不接管或终止。
 - 用户希望通过Tailscale跨网络访问Web，沿用5173入口和同源API/视频代理，使用Jetson实际Tailscale IPv4，保留局域网访问；遥控期限按4.2的最新约定执行。用户明确自行安装、登录，Jetson的Tailscale不设系统开机自启；项目一键start成功后仅启动已安装的tailscaled，可在终端由sudo请求本机密码，不自动安装/enable/登录/修改偏好或sudo规则。status只查询，stop保留VPN便于远程再启动。部署状态须实测确认；见 [Tailscale跨网络访问](docs/Tailscale跨网络访问.md)。
+- Web 的5173 `/api`代理显式使用与后端HTTP/HTTPS协议匹配的keep-alive Agent；dev和preview均使用此配置，API连接池独立于视频代理。连接复用避免HTTP查询逐次建连，不代表网络抖动已消除。详见 [Tailscale跨网络访问](docs/Tailscale跨网络访问.md)。
 - 一键入口默认使用可纳入 Git 的 `config/jetson_system.yaml`，核心与后端使用同一文件，保留当前实车参数（多点默认 0.5 m/s、跟踪默认 0.1 m/s）。此入口不依赖历史实验目录；调参时核对实际 profile，不能只改统一 YAML 就声称生效。新原始 MGX23 日志在 `.runtime/mgx23_raw/`，统一服务日志与状态在 `.runtime/project/`。
 - 默认统一配置为 `agri_robot_ws/src/agri_bringup/config/system.yaml`。实际启动可能通过 `params_file:=...` 指向其他配置，必须核对启动参数和实际 ROS 参数，不能只改默认文件就声称已生效。
 - 之前实车启动曾使用 `data/experiments/20261029_outdoor_waypoint_lHbQGV/system.yaml`。该目录不入 Git，新克隆环境不一定存在；不能把它当作所有机器都具备的默认启动文件。

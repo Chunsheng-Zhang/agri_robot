@@ -99,6 +99,51 @@ sudo systemctl stop tailscaled
 
 网页可访问与适合遥控是两个条件，当前遥控期限和停车保护保持不变，跨网实际操作效果需单独验证。
 
+## 11月6日跨网访问与遥控排查
+
+用户在远端电脑执行以下只读命令，收到 `HTTP/1.1 200 OK`；此前浏览器返回502，优先检查浏览器、系统或代理软件是否将Tailscale目标交给HTTP代理。为Jetson实际Tailscale IPv4配置直连例外，填写IP即可，不附加协议或端口。
+
+```bash
+curl --noproxy '*' -I --connect-timeout 5 --max-time 15 http://<Jetson实际Tailscale-IPv4>:5173/
+```
+
+用户提供的 `tailscale status` 及诊断探测均显示 `peer-relay`。用户说明这是其自建的阿里云青岛中继，不应将本次数据路径误写为公共香港DERP；状态JSON的 `Relay` 字段表示DERP区域，单看该字段不足以判断实际数据路径。
+
+一次短时只读采样中，远端10次ICMP探测平均约83ms、最大211ms，全部收到回复；这些数值不等于浏览器遥控HTTP往返时间，也不足以确定长期丢包率。Jetson本机经5173代理的状态查询15次平均27.5ms，设备查询15次平均55.7ms，后者最大182.6ms。相机320×240、质量40的前两张JPEG约2.2KB，本机返回约24–79ms；画面内容、远端传输与长期抖动仍需另测，不能据此保证并行遥控稳定。
+
+用户明确跨网遥控必须保留相机观察，不以暂停画面作为使用条件。现有按需低码率预览保持开启后的持续更新逻辑，不因遥控自动暂停。后续应在相机开启的情况下测量实际控制请求的往返分布，再决定连接方式和处理开销优化。
+
+当前存在三个相关期限：浏览器指令请求180ms、前端发送的指令有效期约200ms、启用请求往返上限300ms。后端另有指令到期归零、无心跳释放及ROS安全看门狗，不能将这些期限混为一个参数。只放宽浏览器等待时间不能消除指令过期或断续停车。本次未更改期限，也未取得控制权或发出运动指令。
+
+## Web遥控连接复用修复（11月6日）
+
+用户提供的Firefox失败请求计时为Blocked 0ms、DNS约1ms、Connecting 159ms，Sending/Waiting/Receiving均为0ms。该次请求在连接阶段被取消，不能据此归因为后端执行慢。用户另提供的29条Tailscale探测平均46.2ms、最大148ms；默认DISCO探测不经过浏览器和HTTP服务，不能替代遥控接口耗时。
+
+只读复现结果：网页根路径支持keep-alive；经5173访问 `/api/robot/status`、`/api/devices` 则每次响应均有 `Connection: close`，无法复用浏览器连接；直接访问8000后端可连续复用同一TCP连接。当前Vite内置代理在未配置Agent时将上游请求设为 `Connection: close`，后端返回的关闭头又传给浏览器，导致遥控心跳反复承担远程TCP建连成本。
+
+修复位于 `agri_web/vite.config.ts`：只为 `/api` 配置显式keep-alive Agent，依据 `AGRI_BACKEND_URL` 使用Node内置HTTP或HTTPS Agent，TLS验证不放宽。dev与preview沿用同一代理配置，API空闲连接池最多保留32条；没有将总活动连接限制为单条，以免慢查询阻塞遥控。视频代理及相机分辨率、质量、帧率、开启状态逻辑保留，遥控180ms请求期限、200ms指令有效期、300ms启用限制及安全看门狗均未修改。
+
+候选在项目内测试通过后，核对实时基础待命、无控制权、三个任务IDLE、底盘线/角速度指令均为零，才修改在线Vite配置，由其自动重新加载。没有重启ROS核心或后端，没有解除急停、申请控制权或发送实车遥控指令。
+
+验证命令：
+
+```bash
+cd /home/jetson/agri_robot
+TMPDIR="$PWD/.runtime/tmp" node --test \
+  tests/web_proxy_keepalive.test.cjs tests/web_manual_control.test.cjs \
+  tests/web_camera_preview.test.cjs tests/web_connection.test.cjs
+cd agri_web
+TMPDIR=/home/jetson/agri_robot/.runtime/tmp npm run build
+```
+
+- 回归24项通过。新增测试使用实际Vite、本机假后端与假相机：连续8条模拟命令复用浏览器到代理、代理到后端两段连接，并行JPEG仍成功。旧配置复现返回close并失败；测试不连接ROS或实车后端。
+- 前端构建及类型检查通过，未升级环境或依赖。
+- 在线只读检查：状态、设备两个接口各连续8次返回200且各自复用一条TCP连接，响应已为keep-alive。
+- 本机真实相机与API并行检查：3张JPEG均返回200，单张约2.1KB；同时12次状态GET均成功并复用同一TCP连接。这是本机只读检查，不是跨网遥控行驶验证。
+- 日志与明细：`.diagnostics/proxy-keepalive-before.log`、`.diagnostics/proxy-keepalive-candidate.log`、`.diagnostics/web-keepalive-regression.log`、`.diagnostics/web-keepalive-build.log`、`.diagnostics/proxy-keepalive-live.json`、`.diagnostics/proxy-keepalive-camera-parallel.json`。
+
+远端需刷新网页后重新开启相机预览，在停车状态先验证启用和零速度心跳；本机连接复用通过不等于远端遥控已验证通过。连接首次建立、空闲连接失效、重传或链路抖动仍可能超过180ms，不能承诺修复后永不超时。
+
 ## 官方资料
 
 软件验证：启动回归使用假服务进程、模拟Tailscale/systemctl与临时项目目录，覆盖项目成功后才启动VPN、未安装、sudo权限失败、已有连接、status/stop不启动VPN及不会enable/登录等行为。测试不启动真实Tailscale或硬件服务，不修改系统文件。日志为 `.diagnostics/tailscale-startup-tests.log`。实际在线与网页入口直连已于11月6日核对；跨网遥控与视频持续并行、启停动作及实车行驶尚未验证。
