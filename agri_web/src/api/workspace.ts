@@ -42,23 +42,8 @@ export const setLidarProtection = (enabled: boolean) => request<{ success: boole
   '/api/robot/lidar-protection', { enabled })
 export const runDownloadUrl = (id: string) => apiUrl(`/api/runs/${id}/download`)
 export const deleteRun = (id: string) => request<{ success: boolean; data_preserved: boolean }>(`/api/runs/${id}`, undefined, 'DELETE')
-export const armManual = () => request<{ token: string; server_time: number; limits: { linear: number; angular: number } }>('/api/control/arm')
+export const armManual = () => request<{ token: string; server_time: number; heartbeat_protocol: number; limits: { linear: number; angular: number } }>('/api/control/arm')
 export const stopManual = (token: string) => request('/api/control/stop', { token })
-export async function manualCommand(data: { token: string; seq: number; linear: number; angular: number; expires_at: number }) {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 180)
-  try {
-    const response = await fetch(apiUrl('/api/control/command'), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data), signal: controller.signal,
-    })
-    if (!response.ok) throw new Error((await response.json()).detail || '遥控指令被拒绝')
-  } catch (error) {
-    if (controller.signal.aborted) {
-      throw new Error('遥控通信超过 180 毫秒，请检查网络或使用现场手柄')
-    }
-    throw error
-  } finally { clearTimeout(timer) }
-}
 export function downloadJson(name: string, data: unknown) {
   const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = name; anchor.click()

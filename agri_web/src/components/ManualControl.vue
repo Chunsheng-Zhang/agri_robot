@@ -2,64 +2,94 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRealtime } from '../composables/useRealtime'
-import { armManual, manualCommand, stopManual } from '../api/workspace'
+import { armManual, stopManual } from '../api/workspace'
 import { apiUrl } from '../api/http'
+import { ManualChannel, manualTiming } from '../control/manualChannel'
 
 const { devices, safetyFresh } = useRealtime()
 const token = ref<string | null>(null), busy = ref(false), linear = ref(0.15), angular = ref(0.3)
 const direction = ref({ v: 0, w: 0 }), limits = ref({ linear: 0.3, angular: 0.6 })
 const eligible = computed(() => safetyFresh.value && devices.value?.safety.mode === 'base'
   && devices.value.safety.motion_inhibited === false)
-let timer: ReturnType<typeof setInterval> | undefined, seq = 0, offset = 0, pending = false
+let timer: ReturnType<typeof setInterval> | undefined, seq = 0
+let channel: ManualChannel | null = null, openingChannel: ManualChannel | null = null
+let clockAnchor = 0, monotonicAnchor = 0
+const expiry = () => clockAnchor + (performance.now() - monotonicAnchor) / 1000 + manualTiming.lifetime
+let lastSentAt = 0
 let armGeneration = 0
 const keys = new Set<string>()
-async function heartbeat(force = false) {
-  const session = token.value
-  if (!session || (pending && !force)) return
-  pending = true
+async function heartbeat() {
+  const session = token.value, connection = channel
+  if (!session || !connection) return
+  const now = performance.now()
+  if (now - lastSentAt > manualTiming.maxGap) {
+    stop(); ElMessage.error('遥控心跳调度中断，已退出遥控，请重新启用'); return
+  }
+  lastSentAt = now
   const sequence = ++seq
   try {
-    await manualCommand({ token: session, seq: sequence, linear: direction.value.v * linear.value,
-      angular: direction.value.w * angular.value, expires_at: Date.now() / 1000 + offset + 0.2 })
+    await connection.send({ token: session, seq: sequence, linear: direction.value.v * linear.value,
+      angular: direction.value.w * angular.value, expires_at: expiry() })
   } catch (value) {
-    if (token.value === session && sequence === seq) {
+    if (token.value === session && channel === connection) {
       stop(); ElMessage.error(value instanceof Error ? value.message : '遥控通信异常，已停止')
     }
-  } finally { pending = false }
+  }
 }
 async function arm() {
   const generation = ++armGeneration
   let candidate: string | null = null
   busy.value = true
+  let connection: ManualChannel | null = null
   try {
-    const started = Date.now() / 1000, response = await armManual(), ended = Date.now() / 1000
+    connection = new ManualChannel(apiUrl('/api/control/channel'))
+    openingChannel = connection
+    await connection.open()
+    if (generation !== armGeneration || !eligible.value || document.visibilityState !== 'visible') return
+    const started = performance.now(), response = await armManual(), ended = performance.now()
     candidate = response.token
     if (generation !== armGeneration || !eligible.value || document.visibilityState !== 'visible') return
-    if (ended - started > 0.3) throw new Error('遥控响应延迟过高，请检查局域网或使用手柄')
-    const clockOffset = response.server_time - (started + ended) / 2
+    if (response.heartbeat_protocol !== 4) throw new Error('后端遥控协议尚未更新，请先加载新版后端')
+    if (ended - started > 300) throw new Error('遥控响应延迟过高，请检查局域网或使用手柄')
+    clockAnchor = response.server_time
+    monotonicAnchor = (started + ended) / 2
     // Verify the expiring command channel with zero velocity before enabling
     // direction controls. Never retry arm or a movement command automatically.
-    await manualCommand({ token: candidate, seq: 1, linear: 0, angular: 0,
-      expires_at: Date.now() / 1000 + clockOffset + 0.2 })
+    await connection.send({ token: candidate, seq: 1, linear: 0, angular: 0,
+      expires_at: expiry() })
     if (generation !== armGeneration || !eligible.value || document.visibilityState !== 'visible') return
-    token.value = candidate; candidate = null; seq = 1; offset = clockOffset
+    channel = connection; openingChannel = null
+    const activeConnection = connection
+    connection.onFailure = value => {
+      if (channel === activeConnection) { stop(); ElMessage.error(value.message) }
+    }
+    token.value = candidate; candidate = null; seq = 1
+    lastSentAt = performance.now()
     // The Web API caps commands at 1 m/s and 2 rad/s, independently of the
     // physical joystick's factory limits. Do not offer values it will reject.
     limits.value = { linear: Math.min(response.limits.linear, 1), angular: Math.min(response.limits.angular, 2) }
     linear.value = Math.min(linear.value, limits.value.linear); angular.value = Math.min(angular.value, limits.value.angular)
-    timer = setInterval(() => void heartbeat(), 80)
+    timer = setInterval(() => void heartbeat(), manualTiming.heartbeat)
   } catch (value) {
     if (generation === armGeneration) ElMessage.error(value instanceof Error ? value.message : '无法取得遥控权限')
   } finally {
     if (candidate) void stopManual(candidate).catch(() => {})
-    busy.value = false
+    if (connection !== channel) connection?.close()
+    if (openingChannel === connection) openingChannel = null
+    if (generation === armGeneration) busy.value = false
   }
 }
-function neutral() { direction.value = { v: 0, w: 0 }; void heartbeat(true) }
+function requestDirection(v: number, w: number) {
+  direction.value = { v, w }; void heartbeat()
+}
+function neutral() { direction.value = { v: 0, w: 0 }; void heartbeat() }
 function stop(beacon = false) {
   armGeneration += 1  // Late arm/probe responses must never re-enable controls.
   const session = token.value
   token.value = null; clearInterval(timer); keys.clear(); direction.value = { v: 0, w: 0 }
+  channel?.close(); channel = null
+  openingChannel?.close(); openingChannel = null
+  busy.value = false
   if (session) {
     if (beacon) navigator.sendBeacon(apiUrl('/api/control/stop'), new Blob([JSON.stringify({ token: session })], { type: 'application/json' }))
     else void stopManual(session).catch(() => {})
@@ -68,20 +98,22 @@ function stop(beacon = false) {
 function hold(event: PointerEvent, v: number, w: number) {
   if (!token.value) return
   (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
-  direction.value = { v, w }; void heartbeat(true)
+  requestDirection(v, w)
 }
 function updateKeys() {
   if (!keys.has('Space')) return neutral()
-  direction.value = { v: Number(keys.has('KeyW')) - Number(keys.has('KeyS')),
-    w: Number(keys.has('KeyA')) - Number(keys.has('KeyD')) }
-  void heartbeat(true)
+  requestDirection(Number(keys.has('KeyW')) - Number(keys.has('KeyS')),
+    Number(keys.has('KeyA')) - Number(keys.has('KeyD')))
 }
 function keyDown(event: KeyboardEvent) {
   if (!token.value || (event.target as HTMLElement).closest?.('input,textarea,select,[contenteditable=true]')) return
   if (!['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(event.code)) return
   event.preventDefault(); if (!event.repeat) { keys.add(event.code); updateKeys() }
 }
-function keyUp(event: KeyboardEvent) { if (keys.delete(event.code)) updateKeys() }
+function keyUp(event: KeyboardEvent) {
+  if (!['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD'].includes(event.code)) return
+  if (keys.delete(event.code)) updateKeys()
+}
 function hidden() { if (document.visibilityState !== 'visible') stop(true) }
 function blurred() { stop() }
 function unloading() { stop(true) }

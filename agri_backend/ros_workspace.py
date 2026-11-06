@@ -117,24 +117,36 @@ class RosWorkspace:
             self.expiry = -math.inf
             self.v = self.w = 0.0
             self.publish()
-            return {'token': self.token, 'server_time': time(), 'limits': safety.get('limits', {})}
+            return {'token': self.token, 'server_time': time(), 'limits': safety.get('limits', {}),
+                    'heartbeat_protocol': 4}
 
-    def command(self, token, seq, linear, angular, expires_at):
+    def command(self, token, seq, linear, angular, expires_at, tolerate_expired=False):
         safety = device_cache.snapshot()['safety']
         with self.lock:
             if token != self.token or self.token is None or seq <= self.seq:
                 raise HTTPException(409, '遥控会话过期或指令乱序，请重新启用')
             if not safety['fresh'] or safety.get('owner') != 'web' or safety.get('mode') != 'base':
                 raise HTTPException(409, 'Web 没有底盘控制权')
-            remaining = expires_at - time()
-            if not 0 < remaining <= 0.4:
-                raise HTTPException(409, '遥控指令过期或时钟不同步，请重新启用')
+            if monotonic() - self.last_command > 0.5:
+                raise HTTPException(409, '遥控心跳持续中断，请重新启用')
             limits = safety.get('limits', {})
             if abs(linear) > limits.get('linear', 0) or abs(angular) > limits.get('angular', 0):
                 raise HTTPException(409, '指令超出 ROS 安全限速')
+            remaining = expires_at - time()
+            if not math.isfinite(remaining) or remaining > 0.4:
+                raise HTTPException(409, '遥控时间戳异常，请重新启用以校准时钟')
+            if remaining <= 0:
+                overdue = round(min(1e6, -remaining * 1000), 1)
+                if not tolerate_expired:
+                    raise HTTPException(409, f'遥控指令已过期（晚到{overdue}毫秒），请重新启用')
+                self.seq = seq
+                # Drop only this frame: preserve the last accepted command and
+                # its original expiry. A stale frame cannot renew either timer.
+                return {'success': True, 'seq': seq, 'applied': False,
+                        'reason': 'expired', 'overdue_ms': overdue}
             self.seq, self.v, self.w = seq, linear, angular
             self.last_command, self.expiry = monotonic(), monotonic() + min(0.2, remaining)
-        return {'success': True}
+        return {'success': True, 'seq': seq, 'applied': True}
 
     def stop(self, token=None):
         with self.lock:
@@ -164,4 +176,9 @@ class RosWorkspace:
                         mode_revision=self.lease_revision, task_generation=self.lease_generation))
                 return
             moving = monotonic() < self.expiry and safety.get('owner') == 'web'
+            if not moving and (self.v != 0 or self.w != 0):
+                # Expiry still stops output. Only a newly generated, fresh
+                # command from the active held input may resume this session.
+                self.v = self.w = 0.0
+                self.expiry = -math.inf
             self.publish(self.v if moving else 0, self.w if moving else 0)

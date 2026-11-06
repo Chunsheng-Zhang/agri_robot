@@ -14,7 +14,7 @@ export default defineConfig(({ mode }) => {
   const ApiAgent = new URL(backendTarget).protocol === 'https:' ? HttpsAgent : HttpAgent
   const apiAgent = new ApiAgent({ keepAlive: true, maxFreeSockets: 32 })
   const proxy = {
-    '/api': { target: backendTarget, changeOrigin: true, agent: apiAgent },
+    '/api': { target: backendTarget, changeOrigin: true, agent: apiAgent, ws: true },
     '/video': {
       target: env.AGRI_VIDEO_URL || 'http://127.0.0.1:8080', changeOrigin: true,
       rewrite: (path: string) => path.replace(/^\/video/, ''),

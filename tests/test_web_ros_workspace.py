@@ -196,6 +196,37 @@ def test_web_modes_missions_planning_recordings_and_deadman():
         assert client.post('/api/control/command', json={'token': session['token'], 'seq': 2, 'linear': 0.1,
             'angular': 0.0, 'expires_at': time.time() + 0.2}).status_code == 409
 
+        # New ordered channel uses the same real ROS lease/safety chain.
+        # All vehicle motion here is synthetic in an isolated localhost domain.
+        with client.websocket_connect('/api/control/channel') as channel:
+            session = post('/api/control/arm')
+            assert session['heartbeat_protocol'] == 4
+            until(lambda: client.get('/api/devices').json()['safety']['owner'] == 'web')
+            for sequence in range(1, 9):
+                channel.send_json({'token': session['token'], 'seq': sequence,
+                    'linear': 0.0 if sequence == 1 else .15, 'angular': 0.0,
+                    'expires_at': time.time() + .2})
+                reply = channel.receive_json(); assert reply['success'] and reply['seq'] == sequence and reply['applied']
+                time.sleep(.08)
+            until(lambda: system.state['v'] > 0, 1)
+            # A single stale frame cannot interrupt a still-valid command.
+            channel.send_json({'token': session['token'], 'seq': 9, 'linear': -.15,
+                'angular': 0.0, 'expires_at': time.time()-.0058})
+            reply = channel.receive_json()
+            assert not reply['applied'] and reply['reason'] == 'expired'
+            assert system.state['v'] > 0
+            channel.send_json({'token': session['token'], 'seq': 10, 'linear': .15,
+                'angular': 0.0, 'expires_at': time.time()+.2})
+            assert channel.receive_json()['applied']
+            # A real >200ms gap still zeros output; only a new fresh held-input
+            # frame can resume within the active session, without another arm.
+            until(lambda: system.state['v'] == 0, .4)
+            channel.send_json({'token': session['token'], 'seq': 11, 'linear': .15,
+                'angular': 0.0, 'expires_at': time.time()+.2})
+            assert channel.receive_json()['applied']
+            until(lambda: system.state['v'] > 0, .3)
+        until(lambda: not system.safety.gate.owner and system.state['v'] == 0, 2)
+
         # A completed run must finalize capture/plots without any browser polling
         # /api/workspace to drive the state transition.
         post('/api/system/mode', {'mode': 'waypoint'})

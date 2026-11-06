@@ -1,5 +1,6 @@
 """Web mission operations: validated files -> ROS services -> observed status."""
 import hashlib
+import asyncio
 import json
 import tempfile
 import zipfile
@@ -11,9 +12,9 @@ from time import monotonic
 from typing import Literal
 
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
-from pydantic import Field
+from pydantic import Field, ValidationError
 from starlette.background import BackgroundTask
 
 from .devices import device_cache, service_call
@@ -374,6 +375,48 @@ def install_routes(app, require_bridge, robot_snapshot):
     @router.post('/api/control/command')
     def command(data: ManualCommand):
         return workspace.gateway().command(**data.model_dump())
+
+    @router.websocket('/api/control/channel')
+    async def control_channel(socket: WebSocket):
+        # This connection never acquires a lease. The first frame must prove an
+        # existing token with a zero command before any motion can be accepted.
+        # Tokens stay in frames, never query strings or access logs.
+        await socket.accept()
+        token, gateway = None, None
+        detail = None
+        try:
+            while True:
+                payload = await asyncio.wait_for(socket.receive_json(), 1.0 if token is None else 0.5)
+                frame = ManualCommand.model_validate(payload)
+                if token is None:
+                    if frame.seq != 1 or frame.linear != 0 or frame.angular != 0:
+                        raise HTTPException(409, '遥控连接必须先确认零速度心跳')
+                    gateway = workspace.gateway()
+                elif frame.token != token:
+                    raise HTTPException(409, '遥控连接不能切换会话，请重新启用')
+                # The existing validator retains sequence, owner, mode, speed,
+                # clock/expiry checks. Each frame's lifetime is still <=200ms.
+                result = gateway.command(**frame.model_dump(), tolerate_expired=token is not None)
+                token = frame.token
+                await socket.send_json(result)
+        except WebSocketDisconnect:
+            pass
+        except asyncio.TimeoutError:
+            detail = '遥控心跳中断，已释放控制权'
+        except HTTPException as exc:
+            detail = str(exc.detail)
+        except (ValidationError, ValueError, TypeError, KeyError):
+            detail = '遥控数据格式无效，已退出遥控'
+        finally:
+            # An old socket closing must not revoke a newer token's lease.
+            if token is not None and gateway is not None:
+                gateway.stop(token)
+            try:
+                if detail is not None:
+                    await socket.send_json({'success': False, 'detail': detail})
+                await socket.close()
+            except (RuntimeError, OSError, WebSocketDisconnect):
+                pass
 
     @router.post('/api/control/stop')
     def stop(data: StopCommand):

@@ -97,7 +97,7 @@ sudo systemctl stop tailscaled
 3. 如打不开，先检查两端Tailscale在线状态、访问策略、防火墙和5173服务；不要因网页超时就放宽安全期限。
 4. 相机保持原有按需低码率预览。跨网实际吞吐与往返延迟需在操作电脑端确认，Jetson本机请求不能代替跨网验证。
 
-网页可访问与适合遥控是两个条件，当前遥控期限和停车保护保持不变，跨网实际操作效果需单独验证。
+网页可访问与适合遥控是两个条件。11月6日用户批准并已加载新版独立WebSocket心跳，应答等待上限500ms，指令有效期仍约200ms，启用请求往返超过0.3s仍拒绝。相机可同时观察；当前协议4静默丢弃偶发过期帧，不打断上一条仍有效的指令，后续新鲜心跳按当前持续按压继续；真正无新鲜指令约200ms仍归零，断线或500ms无应答仍退出。见 [Web跨网络遥控心跳与应答](Web跨网络遥控心跳与应答.md)。下文180ms描述是此前排查阶段的历史行为。
 
 ## 11月6日跨网访问与遥控排查
 
@@ -143,6 +143,14 @@ TMPDIR=/home/jetson/agri_robot/.runtime/tmp npm run build
 - 日志与明细：`.diagnostics/proxy-keepalive-before.log`、`.diagnostics/proxy-keepalive-candidate.log`、`.diagnostics/web-keepalive-regression.log`、`.diagnostics/web-keepalive-build.log`、`.diagnostics/proxy-keepalive-live.json`、`.diagnostics/proxy-keepalive-camera-parallel.json`。
 
 远端需刷新网页后重新开启相机预览，在停车状态先验证启用和零速度心跳；本机连接复用通过不等于远端遥控已验证通过。连接首次建立、空闲连接失效、重传或链路抖动仍可能超过180ms，不能承诺修复后永不超时。
+
+### 远端复测仍超时
+
+用户随后截图显示连续十多条command成功后仍有一次请求中止，证明连接复用修复尚未解决持续遥控可靠性。失败请求的阶段计时均为0，不能将缺失计时解释为实际零延迟，也不能据此判定后端未收到请求。
+
+Jetson只读TCP检查发现远端现有网页连接的累计重传计数，部分连接RTO约240–252ms，平滑RTT约37–52ms。这解释了为何短时DISCO ping正常仍可能遭遇HTTP超时：TCP按这些重传定时器等待时可能晚于180ms截止时间。但现有数据未把某次浏览器失败与某次TCP重传关联，累计重传也不能作为IP丢包率。诊断快照在 `.diagnostics/web-control-tcp-20261106.txt`。
+
+用户随后明确批准将持续心跳发送与逐条应答等待分离，应答等待上限500ms，同时保持约200ms指令有效期、300ms启用门槛及现有急停和车端看门狗，相机持续可用。新版独立WebSocket通道已实现、通过软件及隔离ROS验证，并在停车核对后只重载后端与网页；在线只握手、不发控制帧，相机正常。跨网持续使用效果仍待用户确认，详见 [Web跨网络遥控心跳与应答](Web跨网络遥控心跳与应答.md)。
 
 ## 官方资料
 
