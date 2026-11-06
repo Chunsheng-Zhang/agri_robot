@@ -2,10 +2,12 @@
 import argparse
 from datetime import datetime
 import fcntl
+import ipaddress
 import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import socket
 import subprocess
 import sys
@@ -147,6 +149,71 @@ class Project:
         except (OSError, subprocess.TimeoutExpired):
             pass
 
+    def show_tailscale(self):
+        """Read-only status; authentication URLs and peer/user details are never printed."""
+        binary = shutil.which('tailscale')
+        if not binary:
+            print('Tailscale：未安装；局域网访问可用，安装步骤见 docs/Tailscale跨网络访问.md。')
+            return False
+        try:
+            result = subprocess.run([binary, 'status', '--json'], capture_output=True, text=True, timeout=3)
+            if result.returncode:
+                print('Tailscale：服务未运行或状态暂不可用。')
+                return False
+            data = json.loads(result.stdout)
+            state = data.get('BackendState')
+            if state in ('NeedsLogin', 'NeedsMachineAuth'):
+                print('Tailscale：尚未登录或等待账户批准；首次登录请按 docs/Tailscale跨网络访问.md 操作。')
+                return False
+            if state != 'Running' or (data.get('Self') or {}).get('Online') is False:
+                print(f'Tailscale：尚未连接（{state or "未知状态"}）；项目服务继续运行。')
+                return False
+            addresses = data.get('TailscaleIPs') or (data.get('Self') or {}).get('TailscaleIPs') or []
+            printed = False
+            for address in addresses:
+                try:
+                    parsed = ipaddress.ip_address(address)
+                except ValueError:
+                    continue
+                if parsed.version == 4:
+                    print(f'Tailscale 跨网络网页：http://{parsed}:5173/')
+                    printed = True
+            if not printed:
+                print('Tailscale：连接中，尚未分配可用IPv4地址。')
+            return printed
+        except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, AttributeError):
+            print('Tailscale：状态暂不可用；项目服务继续运行。')
+            return False
+
+    def start_tailscale(self):
+        """Start an already-installed daemon only; never install/enable/login/change preferences."""
+        if not shutil.which('tailscale'):
+            return self.show_tailscale()
+        systemctl = shutil.which('systemctl')
+        if not systemctl:
+            print('Tailscale：未找到systemctl，请手动启动已安装的客户端；项目服务继续运行。')
+            return False
+        try:
+            active = subprocess.run([systemctl, 'is-active', '--quiet', 'tailscaled'],
+                                    capture_output=True, timeout=3)
+            if active.returncode:
+                command = [systemctl, 'start', 'tailscaled']
+                if os.geteuid() != 0:
+                    sudo = shutil.which('sudo')
+                    if not sudo:
+                        print('Tailscale：请手动执行 sudo systemctl start tailscaled；项目服务继续运行。')
+                        return False
+                    # Password entry belongs to the user's terminal; never read or store it here.
+                    command = [sudo] + ([] if sys.stdin.isatty() else ['-n']) + command
+                print('项目已就绪，正在启动Tailscale（仅本次启动，不设置开机自启；如提示请输入Jetson的sudo密码）。', flush=True)
+                if subprocess.run(command, timeout=30).returncode:
+                    print('Tailscale未启动，请手动执行 sudo systemctl start tailscaled；项目服务继续运行。')
+                    return False
+            return self.show_tailscale()
+        except (OSError, subprocess.TimeoutExpired):
+            print('Tailscale启动未确认，请查看 tailscale status；项目服务继续运行。')
+            return False
+
     def start(self, timeout=60):
         previous = self.load()
         managed = [name for name, item in previous.get('services', {}).items() if self.active(item)]
@@ -284,6 +351,7 @@ class Project:
             print(f'急停={safety.get("emergency_stop")}，控制权={safety.get("owner") or "无"}，'
                   f'雷达障碍停车={safety.get("lidar_required")}')
             self.show_urls()
+        self.show_tailscale()
         return ready
 
 
@@ -302,6 +370,8 @@ def main():
             except BlockingIOError:
                 raise RuntimeError('另一个启动或停止操作正在执行，请稍后查看 status。')
             getattr(project, args.action)()
+        if args.action == 'start':
+            project.start_tailscale()
         return 0
     except (RuntimeError, OSError, ValueError) as exc:
         print(f'操作未完成：{exc}', file=sys.stderr)

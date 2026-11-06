@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+from types import SimpleNamespace
 from time import monotonic, sleep
 
 import pytest
@@ -43,6 +44,7 @@ def project(tmp_path, monkeypatch):
     manager.http = Http()
     monkeypatch.setattr(manager, 'preflight', lambda: None)
     monkeypatch.setattr(manager, 'show_urls', lambda: None)
+    monkeypatch.setattr(manager, 'show_tailscale', lambda: False)
     monkeypatch.setattr(manager, 'existing', lambda: (False, [], []))
     commands = {name: ([sys.executable, '-B', '-u', '-c', 'import time; print("running"); time.sleep(3600)'], tmp_path)
                 for name in ('core', 'backend', 'frontend')}
@@ -161,3 +163,86 @@ def test_start_uses_one_config_for_both_core_and_backend(project):
     assert 'require_lidar:=false' in core
     assert not any('/data/experiments/' in arg for arg in core)
     assert '--strictPort' in commands['frontend'][0]
+
+
+def test_missing_tailscale_never_installs_or_starts_anything(project,monkeypatch):
+    manager,_=project
+    monkeypatch.setattr(startup.shutil,'which',lambda name:None)
+    def forbidden(*args,**kwargs):raise AssertionError('No external command expected')
+    monkeypatch.setattr(startup.subprocess,'run',forbidden)
+    assert startup.Project.start_tailscale(manager) is False
+
+
+def test_tailscale_status_prints_only_local_ipv4_not_auth_or_peer_details(project,monkeypatch,capsys):
+    import json
+    manager,_=project
+    monkeypatch.setattr(startup.shutil,'which',lambda name:'/usr/bin/'+name)
+    state={'BackendState':'Running','Self':{'Online':True},'TailscaleIPs':['100.100.100.10','fd7a:115c:a1e0::1'],
+           'AuthURL':'SECRET_LOGIN_URL','Peer':{'private':'SENSITIVE_PEER'}}
+    monkeypatch.setattr(startup.subprocess,'run',lambda *a,**kw:SimpleNamespace(returncode=0,stdout=json.dumps(state)))
+    assert startup.Project.show_tailscale(manager)
+    output=capsys.readouterr().out
+    assert 'http://100.100.100.10:5173/' in output
+    assert 'SECRET' not in output and 'SENSITIVE' not in output
+
+
+@pytest.mark.parametrize('interactive',[True,False])
+def test_project_starts_installed_tailscale_without_enabling_boot_or_login(project,monkeypatch,interactive):
+    manager,_=project;calls=[]
+    monkeypatch.setattr(startup.shutil,'which',lambda name:'/usr/bin/'+name)
+    monkeypatch.setattr(startup.os,'geteuid',lambda:1000)
+    monkeypatch.setattr(startup.sys,'stdin',SimpleNamespace(isatty=lambda:interactive))
+    monkeypatch.setattr(manager,'show_tailscale',lambda:True)
+    def run(command,**kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=3 if 'is-active' in command else 0)
+    monkeypatch.setattr(startup.subprocess,'run',run)
+    assert startup.Project.start_tailscale(manager)
+    assert calls==[['/usr/bin/systemctl','is-active','--quiet','tailscaled'],
+                   ['/usr/bin/sudo']+([] if interactive else ['-n'])+['/usr/bin/systemctl','start','tailscaled']]
+
+
+def test_running_tailscale_is_not_restarted(project,monkeypatch):
+    manager,_=project;calls=[]
+    monkeypatch.setattr(startup.shutil,'which',lambda name:'/usr/bin/'+name)
+    monkeypatch.setattr(manager,'show_tailscale',lambda:True)
+    def run(command,**kwargs):
+        calls.append(command);return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(startup.subprocess,'run',run)
+    assert startup.Project.start_tailscale(manager)
+    assert len(calls)==1 and 'is-active' in calls[0]
+
+
+def test_tailscale_permission_failure_is_reported_without_changing_project(project,monkeypatch,capsys):
+    manager,_=project
+    monkeypatch.setattr(startup.shutil,'which',lambda name:'/usr/bin/'+name)
+    monkeypatch.setattr(startup.os,'geteuid',lambda:1000)
+    monkeypatch.setattr(startup.sys,'stdin',SimpleNamespace(isatty=lambda:False))
+    monkeypatch.setattr(startup.subprocess,'run',lambda *args,**kw:SimpleNamespace(returncode=1))
+    assert startup.Project.start_tailscale(manager) is False
+    assert '项目服务继续运行' in capsys.readouterr().out
+    assert not manager.state_file.exists()
+
+
+@pytest.mark.parametrize('action',['start','stop','status'])
+def test_cli_tailscale_hook_runs_only_after_successful_project_start(project,monkeypatch,action):
+    manager,_=project;calls=[]
+    monkeypatch.setattr(startup,'Project',lambda **kwargs:manager)
+    monkeypatch.setattr(startup.sys,'argv',['project.py',action])
+    monkeypatch.setattr(manager,'start',lambda:calls.append('project_start'))
+    monkeypatch.setattr(manager,'stop',lambda:calls.append('project_stop'))
+    monkeypatch.setattr(manager,'status',lambda:calls.append('project_status') or True)
+    monkeypatch.setattr(manager,'start_tailscale',lambda:calls.append('tailscale_start'))
+    assert startup.main()==0
+    assert calls==(['project_start','tailscale_start'] if action=='start' else ['project_'+action])
+
+
+def test_failed_project_start_does_not_start_tailscale(project,monkeypatch):
+    manager,_=project;calls=[]
+    monkeypatch.setattr(startup,'Project',lambda **kwargs:manager)
+    monkeypatch.setattr(startup.sys,'argv',['project.py','start'])
+    def failed():raise RuntimeError('synthetic project failure')
+    monkeypatch.setattr(manager,'start_tailscale',lambda:calls.append('unexpected VPN start'))
+    monkeypatch.setattr(manager,'start',failed)
+    assert startup.main()==1
+    assert not calls
