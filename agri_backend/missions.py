@@ -169,7 +169,7 @@ class MissionStore:
     def preview(self, mission, origin):
         if mission.import_origin is not None and mission.import_origin != origin:
             raise ValueError('导入任务的固定原点不同，请先核对场地和坐标基准')
-        (WaypointParameters if mission.mode == 'waypoint' else CoverageParameters)(**mission.parameters)
+        parameters = (WaypointParameters if mission.mode == 'waypoint' else CoverageParameters)(**mission.parameters)
         frame = LocalFrame(origin['latitude'], origin['longitude'], self.config()['/**']['ros__parameters'].get('max_local_radius', 5000))
         if frame.identity != origin:
             raise ValueError('投影与固定原点不一致')
@@ -182,8 +182,14 @@ class MissionStore:
         polygon = field_from_data(mission.boundary, frame)
         rings = [[{'x': x, 'y': y} for x, y in ring.coords]
                  for ring in [polygon.exterior, *polygon.interiors]]
+        inset = polygon.buffer(-parameters.headland_width) if parameters.headland_width else polygon
+        pieces = [] if inset.is_empty else [inset] if inset.geom_type == 'Polygon' else list(inset.geoms)
+        inset_polygons = [[[{'x': x, 'y': y} for x, y in ring.coords]
+                           for ring in [piece.exterior, *piece.interiors]]
+                          for piece in pieces if piece.geom_type == 'Polygon']
         return {'frame_id': 'map', 'points': [], 'rings': rings,
-                'area': polygon.area, 'length': polygon.length}
+                'area': polygon.area, 'length': polygon.length,
+                'inset_polygons': inset_polygons, 'inset_distance_m': parameters.headland_width}
 
     def path(self, identity):
         if not re.fullmatch('[0-9a-f]{32}', identity):
