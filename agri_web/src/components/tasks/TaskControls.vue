@@ -15,6 +15,9 @@ const activeRun = computed(() => context.value?.active_run?.mode === props.kind 
 const status = computed(() => devices.value?.[source.value])
 const state = computed(() => isFresh(status.value) ? status.value?.state : undefined)
 const planning = computed(() => props.kind === 'coverage' && isFresh(devices.value?.planning) && devices.value?.planning.state === 'PLANNING')
+const planningProgress = computed(() => planning.value ? devices.value?.planning.search_progress : null)
+const planningPhases: Record<string,string> = { INITIALIZING: '准备地块与评价网格', COARSE: '作业角度粗搜索',
+  REFINE: '较优角度细化搜索', FINALIZING: '汇总评分与校验路径', COMPLETE: '搜索完成，等待最终校验' }
 const displayState = computed(() => planning.value ? 'PLANNING' : activeRun.value?.stage === 'planning'
   ? activeRun.value.state : state.value)
 const canPause = computed(() => !busy.value && state.value === 'RUNNING')
@@ -45,6 +48,14 @@ async function operate(action: 'pause' | 'resume' | 'cancel' | 'cancel_plan') {
 <template>
   <div class="task-controls">
     <div><strong>{{ activeRun?.name || (kind === 'waypoint' ? '多点导航任务' : '覆盖作业任务') }}<span v-if="activeRun"> · v{{ activeRun.mission_revision }}</span></strong><el-tag type="info">{{ taskText(displayState) }}</el-tag><small>{{ activeRun?.reason || status?.reason || '任务开始后在此查看反馈' }}</small><small v-if="state && state !== 'IDLE'">用时 {{ numberText(status?.elapsed_seconds, 1) }} s（含暂停）<span v-if="progress !== null"> · {{ source === 'tracking' ? '路径任务进度' : '目标点完成进度' }} {{ numberText(progress, 1) }}%</span></small></div>
+    <div v-if="planningProgress" class="planning-progress" role="status" aria-live="polite">
+      <strong>智能规划进度：{{ planningPhases[planningProgress.phase] || planningProgress.phase }}</strong>
+      <small>已比较 {{ planningProgress.evaluated_count }} 套候选 · 可执行 {{ planningProgress.feasible_count }} 套 · 已用时 {{ numberText(planningProgress.elapsed_seconds, 1) }} s</small>
+      <template v-if="planningProgress.stage_total > 0">
+        <small>本阶段方向进度 {{ planningProgress.stage_completed }} / {{ planningProgress.stage_total }}<span v-if="planningProgress.angle_rad != null"> · 当前方向 {{ numberText(planningProgress.angle_rad * 180 / Math.PI, 2) }}°</span></small>
+        <progress :value="planningProgress.stage_completed" :max="planningProgress.stage_total" aria-label="本阶段作业方向比较进度" />
+      </template>
+    </div>
     <div v-if="coveragePhase" class="coverage-phase" role="status">
       <strong>{{ coveragePhase === 'APPROACHING' ? '前往覆盖起点（单点导航）' : coveragePhase === 'ALIGNING' ? '航向对齐中（原地转向）' : '覆盖路径跟踪' }}</strong>
       <small v-if="coveragePhase === 'APPROACHING'">距起点 {{ numberText(status?.approach_distance, 2) }} m · 到达后先对齐航向，再开始覆盖跟踪</small>
@@ -62,4 +73,5 @@ async function operate(action: 'pause' | 'resume' | 'cancel' | 'cancel_plan') {
 .task-controls { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; padding: 18px; background: #edf5ef; border: 1px solid #dce9df; border-radius: 10px; margin-bottom: 20px; }
 .task-controls { position: sticky; top: 0; z-index: 4; box-shadow: 0 3px 12px #193d2410; }
 .task-controls strong { margin-right: 12px; }.task-controls small { display: block; margin-top: 8px; color: #758379; }.buttons { display: flex; flex-wrap: wrap; gap: 8px; }.buttons .el-button { margin: 0; }
+.planning-progress { flex-basis: 100%; } .planning-progress progress { width: min(100%, 460px); margin-top: 10px; accent-color: #40916c; }
 </style>

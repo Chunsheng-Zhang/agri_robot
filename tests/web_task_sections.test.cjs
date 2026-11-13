@@ -46,7 +46,7 @@ function fixture(kind) {
   return { props, devices, context, safetyFresh, calls, refreshes, messages, modules, load, stop: () => scope.stop() }
 }
 const controls = f => f.load('components/tasks/TaskControls.vue', [
-  'source', 'activeRun', 'state', 'displayState', 'planning', 'coveragePhase', 'progress',
+  'source', 'activeRun', 'state', 'displayState', 'planning', 'coveragePhase', 'progress', 'planningProgress',
   'canPause', 'canResume', 'canCancel', 'operate',
 ])
 
@@ -226,5 +226,19 @@ test('duplicate clicks do not issue two deletes and backend refusal is shown wit
   assert.deepEqual(f.messages, [['error', '控制器仍在使用这条记录']])
   assert.equal(button.busy.value, false)
   assert.equal(f.refreshes.length, 0)
+  f.stop()
+})
+
+test('planning progress follows fresh ROS feedback and never leaks into waypoint view',()=>{
+  const f=fixture('coverage'), c=controls(f)
+  f.devices.value.planning={state:'PLANNING',search_progress:{phase:'REFINE',stage_completed:3,stage_total:6,evaluated_count:16,feasible_count:14,elapsed_seconds:50}}
+  assert.equal(c.planningProgress.value.phase,'REFINE')
+  assert.equal(c.planningProgress.value.evaluated_count,16)
+  f.devices.value.planning.stale=true
+  assert.equal(c.planningProgress.value,null)
+  f.devices.value.planning.stale=false;f.props.kind='waypoint'
+  assert.equal(c.planningProgress.value,null)
+  f.props.kind='coverage';f.devices.value.planning.state='CANCELED'
+  assert.equal(c.planningProgress.value,null)
   f.stop()
 })

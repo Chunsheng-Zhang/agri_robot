@@ -9,6 +9,7 @@ export interface ReferencePathResponse {
   count: number
   points: PathPoint[]
   frame_id?: string
+  fingerprint?: string | null
 }
 
 export interface RobotStatusResponse {
@@ -72,6 +73,11 @@ export interface SafetySnapshot extends Snapshot {
 }
 
 export interface TaskSnapshot extends Snapshot {
+  search_progress?: {
+    phase: string; stage_completed: number; stage_total: number
+    evaluated_count: number; feasible_count: number; elapsed_seconds: number
+    angle_rad?: number; order?: string
+  } | null
   phase?: 'IDLE' | 'APPROACHING' | 'ALIGNING' | 'TRACKING'
   alignment_error?: number | null
   alignment_next_phase?: 'APPROACHING' | 'TRACKING' | null
