@@ -75,15 +75,36 @@ class WaypointParameters(StrictModel):
         return self
 
 
-class CoverageParameters(StrictModel):
+class SmartPlanningParameters(StrictModel):
+    @model_validator(mode='before')
+    @classmethod
+    def remove_legacy_coverage_constraint(cls, value):
+        # Old saved/imported tasks remain usable; the removed field has no effect
+        # and is not emitted into new task parameters or execution snapshots.
+        if isinstance(value, dict):
+            from agri_path_planning.planning_options import LEGACY
+            return {k:v for k,v in value.items() if k not in LEGACY}
+        return value
+
+
+
+class CoverageParameters(SmartPlanningParameters):
+    robot_width: float = Field(default=0.2, ge=0.05, le=20)
+    robot_length: float = Field(default=0.45, ge=0.05, le=20)
+    rotation_safety_margin: float = Field(default=0.05, ge=0, le=5)
+    rotation_center_x: float = Field(default=0, ge=-10, le=10)
+    rotation_center_y: float = Field(default=0, ge=-10, le=10)
     operation_width: float = Field(default=0.8, ge=0.1, le=20)
-    min_turning_radius: float = Field(default=0.6, ge=0.05, le=20)
+    evaluation_width: float = Field(default=0, ge=0, le=20)
+    quality_resolution: float = Field(default=0.05, ge=0.01, le=0.5)
+    min_turning_radius: float = Field(default=1.0, ge=0.05, le=20)
     headland_width: float = Field(default=3, ge=0, le=50)
     swath_angle: float = Field(default=0, ge=-math.pi, le=math.pi)
     sampling_distance: float = Field(default=0.1, ge=0.02, le=1)
-    route_mode: Literal['BOUSTROPHEDON', 'SNAKE', 'SPIRAL'] = 'BOUSTROPHEDON'
+    route_mode: Literal['BOUSTROPHEDON', 'SNAKE', 'SPIRAL', 'CONTOUR'] = 'BOUSTROPHEDON'
     angle_mode: Literal['SET_ANGLE', 'BRUTE_FORCE'] = 'SET_ANGLE'
-    path_continuity: Literal['CONTINUOUS', 'DISCONTINUOUS'] = 'CONTINUOUS'
+    path_continuity: Literal['DUBINS', 'DUBINS_CC', 'REEDS_SHEPP', 'REEDS_SHEPP_HC'] = 'DUBINS_CC'
+    allow_reverse: bool = Field(default=False, strict=True)
     lookahead: float = Field(default=0.8, ge=0.1, le=10)
     speed: float = Field(default=0.2, gt=0, le=1)
     max_angular: float = Field(default=1.0, gt=0, le=1)
@@ -91,6 +112,20 @@ class CoverageParameters(StrictModel):
     start_tolerance: float = Field(default=0.8, ge=0.05, le=5)
     search_window: float = Field(default=1, ge=0.1, le=10)
     max_path_error: float = Field(default=2, ge=0.05, le=10)
+
+    @model_validator(mode='before')
+    @classmethod
+    def native_curve_name(cls, value):
+        if isinstance(value, dict) and 'path_continuity' in value:
+            from agri_path_planning.curves import curve_name
+            return {**value, 'path_continuity': curve_name(value['path_continuity'])}
+        return value
+
+    @model_validator(mode='after')
+    def evaluation_parameters(self):
+        if 0 < self.evaluation_width < .1:
+            raise ValueError('评价幅宽须为0（沿用作业幅宽）或至少0.1米')
+        return self
 
 
 class Mission(StrictModel):
@@ -126,7 +161,7 @@ class MissionStore:
             return config.get(node, {}).get('ros__parameters', {})
         waypoint = WaypointParameters(**{k: v for k, v in values('waypoint').items()
                                         if k in WaypointParameters.model_fields}).model_dump()
-        merged = {**values('coverage_server'), **values('coverage_adapter'), **values('path_tracker')}
+        merged = {**values('/**'), **values('coverage_server'), **values('coverage_adapter'), **values('path_tracker')}
         coverage = CoverageParameters(**{k: v for k, v in merged.items()
                                         if k in CoverageParameters.model_fields}).model_dump()
         return {'waypoint': waypoint, 'coverage': coverage}
@@ -205,13 +240,13 @@ class MissionStore:
         run['updated_at'] = now()
         atomic_json(self.run_path(run['id']) / 'run.json', {k: v for k, v in run.items() if not k.startswith('_')})
 
-    def list_runs(self):
+    def list_runs(self, limit=50):
         records = []
         for path in sorted(self.runs.glob('*_web_*/run.json'), reverse=True):
             if (self.deleted_runs / f'{path.parent.name}.json').exists():
                 continue
             records.append(json.loads(path.read_text(encoding='utf-8')))
-            if len(records) == 50:
+            if limit is not None and len(records) >= limit:
                 break
         return records
 

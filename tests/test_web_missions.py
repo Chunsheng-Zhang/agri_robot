@@ -66,7 +66,7 @@ def test_unsafe_parameters_and_file_paths_rejected(store):
             store.save(Mission(name='bad', mode='waypoint', waypoints=[point], parameters=parameters), origin)
     with pytest.raises(ValidationError):
         store.save(Mission(name='bad reverse', mode='coverage', boundary={'points': [point] * 3},
-                           parameters={'path_continuity': 'REEDS_SHEPP'}), origin)
+                           parameters={'path_continuity': 'UNSUPPORTED_CURVE'}), origin)
     with pytest.raises(ValueError):
         store.path('../../secret')
     with pytest.raises(ValueError):
