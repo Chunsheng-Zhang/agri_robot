@@ -1,4 +1,4 @@
-"""A single coverage execution: waypoint approach, then forward path tracking."""
+"""Waypoint approach, body-heading alignment, and direction-aware tracking."""
 import math
 from time import monotonic
 
@@ -38,10 +38,14 @@ class CoverageController:
         self.phase = 'APPROACHING' if self.start_distance > start_tolerance else 'ALIGNING'
         self.alignment_next_phase = 'TRACKING'
         self.alignment_reason = 'start'
-        self.alignment_yaw = self.path.at(0)[2] if self.phase == 'ALIGNING' else None
+        self.alignment_yaw = self.tracker.error(*path.points[0])[3] if self.phase == 'ALIGNING' else None
         self.alignment_error = None
         self.alignment_started = self.alignment_since = None
         self.alignment_last_sample = None
+        self.switch_settling=False
+        self.pre_turn_settling=False
+        self.pre_turn_since=self.pre_turn_sample=None
+        self.settling_position=None
         self.approach_path = Polyline([self.start, self.target]) if self.phase == 'APPROACHING' else None
         self.approach = WaypointController(
             max_linear=self.tracker.speed, min_linear=min(0.03, self.tracker.speed),
@@ -59,6 +63,9 @@ class CoverageController:
         self.alignment_yaw = self.alignment_error = None
         self.alignment_started = self.alignment_since = None
         self.alignment_last_sample = None
+        if self.pre_turn_settling:
+            self.pre_turn_since=self.pre_turn_sample=None
+            self.settling_position=None
 
     def active_leg(self):
         return self.alignment_next_phase if self.phase == 'ALIGNING' else self.phase
@@ -72,8 +79,7 @@ class CoverageController:
         if self.active_leg() == 'APPROACHING':
             distance, _, lateral, tangent = self.approach_path.project(x, y, 0, self.approach_path.total)
         else:
-            distance, _, lateral, tangent = self.path.project(
-                x, y, self.progress, self.tracker.window)
+            distance, _, lateral, tangent = self.tracker.error(x,y)
         return distance, lateral, tangent
 
     def command(self, x, y, yaw, now=None, sample_stamp=None):
@@ -85,10 +91,26 @@ class CoverageController:
                 self.alignment_started = now
             if now - self.alignment_started >= self.alignment_timeout:
                 raise AlignmentTimeout('Heading alignment timed out')
+            if self.pre_turn_settling:
+                if self.alignment_yaw is None:self.alignment_yaw=tangent
+                self.alignment_error=wrap_angle(self.alignment_yaw-yaw)
+                # Hold zero before rotating, using new localization samples.
+                if self.settling_position is None or math.dist(self.settling_position,(x,y))>.02:
+                    self.settling_position=(x,y);self.pre_turn_since=None
+                if sample_stamp is not None and sample_stamp!=self.pre_turn_sample:
+                    self.pre_turn_sample=sample_stamp
+                    if self.pre_turn_since is None:self.pre_turn_since=now
+                    elif now-self.pre_turn_since>=self.alignment_hold_time:
+                        self.pre_turn_settling=False
+                return 0.,0.,distance,lateral,self.alignment_error,False
             if self.alignment_yaw is None:
                 self.alignment_yaw = (math.atan2(self.target[1]-y, self.target[0]-x)
                                       if self.alignment_next_phase == 'APPROACHING' else tangent)
             self.alignment_error = wrap_angle(self.alignment_yaw - yaw)
+            if self.switch_settling:
+                if self.settling_position is None:self.settling_position=(x,y)
+                if math.dist(self.settling_position,(x,y))>.02:
+                    self.alignment_since=None;self.settling_position=(x,y)
             if abs(self.alignment_error) <= self.alignment_tolerance:
                 # Reusing one odometry message cannot complete the dwell.
                 if sample_stamp is not None and sample_stamp == self.alignment_last_sample:
@@ -99,6 +121,7 @@ class CoverageController:
                     self.alignment_since = now
                 if now - self.alignment_since >= self.alignment_hold_time:
                     self.phase = self.alignment_next_phase
+                    self.switch_settling=False
                 return 0.0, 0.0, distance, lateral, self.alignment_error, False
             self.alignment_since = None
             self.alignment_last_sample = sample_stamp
@@ -110,9 +133,18 @@ class CoverageController:
             distance, lateral, _ = self.error(x, y)
             if arrived:
                 self.begin_alignment('TRACKING', 'approach_complete')
-                self.alignment_yaw = self.path.at(0)[2]
+                self.alignment_yaw = self.tracker.error(*self.target)[3]
                 # No forward command crosses the approach/alignment boundary.
                 distance, lateral, _ = self.error(x, y)
                 return 0.0, 0.0, distance, lateral, heading, False
             return v, w, distance, lateral, heading, False
-        return self.tracker.command(x, y, yaw)
+        result=self.tracker.command(x,y,yaw)
+        if self.tracker.needs_switch:
+            old_direction=self.tracker.leg[2]
+            self.tracker.advance_leg()
+            point_turn=old_direction==self.tracker.leg[2]
+            self.begin_alignment('TRACKING','point_turn' if point_turn else 'direction_change')
+            self.switch_settling=True;self.settling_position=(x,y)
+            if point_turn:
+                self.pre_turn_settling=True;self.pre_turn_since=self.pre_turn_sample=None
+        return result

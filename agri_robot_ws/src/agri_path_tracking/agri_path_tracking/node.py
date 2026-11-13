@@ -11,6 +11,7 @@ from agri_base.runtime import TaskNode, run, yaw_of
 from agri_base.recording import open_recording
 from .controller import Polyline, validate_velocity_limit
 from .coverage import CoverageController, AlignmentTimeout
+from agri_base.path_geometry import directed_poses, point_turn_indices
 
 
 class PathTracker(TaskNode):
@@ -21,7 +22,7 @@ class PathTracker(TaskNode):
                     'start_tolerance': 0.8, 'max_path_error': 2.0,
                     'alignment_tolerance': math.radians(10), 'alignment_hold_time': 0.5,
                     'alignment_max_angular': 0.3, 'alignment_timeout': 30.0,
-                    'control_rate': 20.0, 'trajectory_directory': ''}
+                    'control_rate': 20.0, 'trajectory_directory': '', 'allow_reverse': False}
         for name, value in defaults.items():
             self.declare_parameter(name, value)
             if isinstance(value, float):
@@ -98,12 +99,8 @@ class PathTracker(TaskNode):
             if msg.header.frame_id != 'map' or any(p.header.frame_id != 'map' for p in msg.poses):
                 raise ValueError('Reference path must be in map')
             Polyline([(p.pose.position.x, p.pose.position.y) for p in msg.poses])
-            # Reject reverse sections even for externally supplied nav_msgs/Path.
-            for a, b in zip(msg.poses, msg.poses[1:]):
-                dx, dy = b.pose.position.x - a.pose.position.x, b.pose.position.y - a.pose.position.y
-                yaw = yaw_of(a.pose.orientation)
-                if math.hypot(dx, dy) > 1e-5 and dx * math.cos(yaw) + dy * math.sin(yaw) < -1e-4:
-                    raise ValueError('Reverse path section unsupported')
+            directed_poses([(p.pose.position.x,p.pose.position.y,yaw_of(p.pose.orientation)) for p in msg.poses])
+            point_turn_indices([(p.pose.position.x,p.pose.position.y,yaw_of(p.pose.orientation)) for p in msg.poses])
             self.pending_path = msg
         except ValueError as exc:
             self.pending_path = None
@@ -113,8 +110,14 @@ class PathTracker(TaskNode):
         if self.count_publishers('/reference_path') != 1:
             raise ValueError('Require exactly one reference path publisher')
         if self.pending_path is None:
-            raise ValueError('No validated forward path received')
-        line = Polyline([(p.pose.position.x, p.pose.position.y) for p in self.pending_path.poses])
+            raise ValueError('No validated path received')
+        poses,directions=directed_poses([(p.pose.position.x,p.pose.position.y,yaw_of(p.pose.orientation))
+                                         for p in self.pending_path.poses])
+        if any(d<0 for d in directions) and not self.get_parameter('allow_reverse').value:
+            raise ValueError('Reverse path requires explicit allow_reverse')
+        stops=point_turn_indices([(p.pose.position.x,p.pose.position.y,yaw_of(p.pose.orientation))
+                                  for p in self.pending_path.poses])
+        line = Polyline([p[:2] for p in poses],directions,stops)
         p = self.odom.pose.pose.position
         if math.hypot(p.x, p.y) > self.frame.max_radius:
             raise ValueError('Robot outside configured local operating radius')
@@ -140,8 +143,11 @@ class PathTracker(TaskNode):
                         task_type='coverage_approach', target_index_base=0,
                         approach_start={'x': p.x, 'y': p.y})
                 self.record_file, self.record_writer = open_recording(folder, 'track', self.frame, points,
-                    ['stamp', 'x', 'y', 'yaw', 'cross_track', 'heading_error', 'progress'],
+                    ['stamp', 'x', 'y', 'yaw', 'cross_track', 'heading_error', 'progress', 'direction'],
                     task_type='coverage_tracking',
+                    allow_reverse=self.get_parameter('allow_reverse').value,
+                    segment_directions=directions,
+                    point_turn_indices=stops,
                     approach_csv=self.approach_file.name.split('/')[-1] if self.approach_file else None)
                 self.alignment_file, self.alignment_writer = open_recording(
                     folder, 'alignment', self.frame, points,
@@ -213,7 +219,7 @@ class PathTracker(TaskNode):
                         elif recording_phase == 'APPROACHING':
                             values += [0, self.controller.distance_to_start, heading]
                         else:
-                            values += [lateral, heading, self.controller.progress]
+                            values += [lateral, heading, self.controller.progress,self.controller.tracker.leg[2]]
                         writer.writerow(values)
                         self.record_count += 1
                         if self.record_count % 20 == 0:
@@ -252,6 +258,8 @@ class PathTracker(TaskNode):
             approach_distance=controller.distance_to_start if controller and controller.phase == 'APPROACHING' else None,
             approach_target={'x': controller.target[0], 'y': controller.target[1]} if controller else None,
             progress=controller.progress if controller else 0.0,
+            direction=controller.tracker.leg[2] if controller else 1,
+            direction_leg=controller.tracker.leg_index if controller else 0,
             length=controller.path.total if controller else 0.0, **extra)
 
 
