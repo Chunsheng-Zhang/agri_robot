@@ -101,6 +101,21 @@ def test_web_modes_missions_planning_recordings_and_deadman():
             '/coverage_lifecycle_manager/manage_nodes'].service_is_ready())
         post(f'/api/missions/{coverage["id"]}/plan')
         until(lambda: (client.get('/api/workspace').json().get('active_run') or {}).get('state') == 'READY', 30)
+        until(lambda: ((client.get('/api/workspace').json().get('active_run') or {}).get('coverage_quality') or {}).get('state') == 'SUCCEEDED',30)
+        quality_run = client.get('/api/workspace').json()['active_run']
+        quality = quality_run['coverage_quality']['planned']['metrics']['field']
+        assert 0 <= quality['overlap_percent'] <= quality['coverage_percent'] <= 100
+        assert abs(quality['coverage_percent'] + quality['miss_percent'] - 100) < 1e-6
+        assert client.get(f'/api/runs/{quality_run["id"]}/coverage-quality/plan.png').status_code == 200
+        map_url = f'/api/runs/{quality_run["id"]}/coverage-map'
+        until(lambda: client.get(map_url).json()['state'] == 'READY', 20)
+        layers = client.get(map_url).json()
+        assert layers['reference_fingerprint'] == quality_run['reference_fingerprint']
+        assert layers['projection'] == quality_run['projection']
+        assert layers['sources']['actual']['status'] == 'NOT_STARTED'
+        assert layers['inset_polygons']
+        for layer in ('completed', 'remaining', 'overlap'):
+            assert client.get(f'{map_url}/planned/{layer}.png?v={layers["sources"]["planned"]["version"]}').status_code == 200
         assert system.backend.workspace_ros.get_parameters('coverage_server', ['min_turning_radius'])['min_turning_radius'] == 0.65
         assert not system.safety.gate.owner  # Planning never starts motion.
         # Use the actual current synthetic pose, without teleporting to the path.
@@ -146,6 +161,11 @@ def test_web_modes_missions_planning_recordings_and_deadman():
             assert data.read('communication/http_server.csv')
             assert len(data.read('analysis/communication_loss.png')) > 10000
             assert len(data.read('analysis/communication_latency.png')) > 10000
+            assert '全覆盖作业几何质量评价报告' in data.read('analysis/coverage_quality_report.md').decode()
+            assert 'analysis/coverage_quality.json' in data.namelist()
+            assert 'analysis/coverage_quality_plan_cells.csv' in data.namelist()
+            assert 'analysis/coverage_quality_plan.svg' in data.namelist()
+            assert not any(name.endswith('.bib') for name in data.namelist())
 
         # This fixture is explicitly isolated (Domain 200..230, localhost only).
         # Place its synthetic vehicle at the reference start with a 90deg error
@@ -174,6 +194,13 @@ def test_web_modes_missions_planning_recordings_and_deadman():
         assert system.state['v'] == 0
         until(lambda: system.tracker.controller.phase == 'TRACKING' and system.state['v'] > 0, 20)
         assert system.tracker.controller.progress < 1
+        # Record enough formal samples to exercise a live flushed segment,
+        # rather than cancelling after only the first tracking pose.
+        first_tracking_count = system.tracker.record_count
+        until(lambda: system.tracker.record_count >= first_tracking_count + 25)
+        live_run = client.get('/api/workspace').json()['active_run']
+        map_url = f'/api/runs/{live_run["id"]}/coverage-map'
+        until(lambda: client.get(map_url).json().get('sources', {}).get('actual', {}).get('status') == 'OBSERVED', 20)
         post('/api/tasks/tracking/cancel')
         until(lambda: system.tracker.state == 'CANCELED' and not system.safety.gate.owner)
         alignment_run = client.get('/api/workspace').json()['active_run']
@@ -185,6 +212,11 @@ def test_web_modes_missions_planning_recordings_and_deadman():
         alignment_metrics = json.loads((alignment_directory/'analysis/metrics.json').read_text())
         assert alignment_metrics['phases']['alignment']['samples'] == len(alignment_rows)
         assert alignment_metrics['phases']['tracking']['samples'] > 0
+        map_url = f'/api/runs/{alignment_run["id"]}/coverage-map'
+        until(lambda: client.get(map_url).json().get('sources', {}).get('actual', {}).get('status') == 'FINAL', 20)
+        final_layers = client.get(map_url).json()
+        assert final_layers['sources']['actual']['samples'] > 0
+        assert final_layers['sources']['actual']['track_lines']
         post('/api/system/mode', {'mode': 'base'})
         until(lambda: client.get('/api/devices').json()['safety']['mode'] == 'base')
         session = post('/api/control/arm')

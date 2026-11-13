@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useWorkspace } from '../../composables/useWorkspace'
 import { deleteMission } from '../../api/workspace'
-import type { MissionDocument, MissionMode } from '../../api/workspace'
+import type { MissionDocument, MissionMode, SavedPlan } from '../../api/workspace'
 import TaskEditor from './TaskEditor.vue'
 import TaskControls from './TaskControls.vue'
 import TaskRunHistory from './TaskRunHistory.vue'
@@ -12,11 +12,12 @@ import ModeSelector from '../ModeSelector.vue'
 const props = defineProps<{ kind: MissionMode }>()
 const { context, error, loading, refresh } = useWorkspace()
 const kind = computed(() => props.kind), selectedId = ref<string>()
+const selectedPlanId = ref<string>()
 const title = computed(() => kind.value === 'waypoint' ? '多点导航' : '全覆盖规划与跟踪')
 const workflow = computed(() => kind.value === 'waypoint'
   ? ['配置目标点与导航参数', '检查并保存任务', '开始导航与执行控制']
-  : ['编辑边界与禁入区域', '保存任务与生成路径', '接近起点并跟踪覆盖路径'])
-watch(kind, () => { selectedId.value = undefined })
+  : ['编辑边界并保存任务', '生成并保存规划路径', '加载路径并明确开始覆盖'])
+watch(kind, () => { selectedId.value = undefined; selectedPlanId.value = undefined })
 const missions = computed(() => context.value?.missions.filter(p => p.mode === kind.value) || [])
 const selected = computed<MissionDocument | null>(() => {
   const value = missions.value.find(p => p.id === selectedId.value)
@@ -29,7 +30,16 @@ async function remove(id: string) {
   try { await deleteMission(id); if (id === selectedId.value) selectedId.value = undefined; await refresh() }
   catch (value) { ElMessage.error(value instanceof Error ? value.message : '删除失败') }
 }
-function saved(value: MissionDocument) { if (value.mode === kind.value) selectedId.value = value.id }
+function choose(mission: { id: string; coverage_plans?: readonly SavedPlan[] }, plan?: string) {
+  selectedId.value = mission.id
+  selectedPlanId.value = plan || mission.coverage_plans?.[0]?.id
+}
+function saved(value: MissionDocument) {
+  if (value.mode === kind.value) { selectedId.value = value.id; selectedPlanId.value = undefined }
+}
+function pathSaved(missionId: string, planId: string) {
+  if (selectedId.value === missionId) selectedPlanId.value = planId
+}
 </script>
 <template>
   <div class="task-workspace">
@@ -41,14 +51,20 @@ function saved(value: MissionDocument) { if (value.mode === kind.value) selected
     <div v-if="context" class="workspace-grid">
       <el-card shadow="never" class="mission-list">
         <template #header><strong>{{ kind === 'waypoint' ? '多点导航任务' : '覆盖作业任务' }}</strong></template>
-        <el-button class="new-task" type="success" plain @click="selectedId = undefined">＋ {{ kind === 'waypoint' ? '新建多点导航任务' : '新建覆盖任务' }}</el-button>
+        <el-button class="new-task" type="success" plain @click="selectedId = undefined; selectedPlanId = undefined">＋ {{ kind === 'waypoint' ? '新建多点导航任务' : '新建覆盖任务' }}</el-button>
         <div v-if="!missions.length" class="empty-list">{{ kind === 'waypoint' ? '尚无多点任务。填写目标点，或导入 JSON / CSV。' : '尚无覆盖任务。填写地块边界，或导入 JSON / GeoJSON。' }}</div>
         <div v-for="mission in missions" :key="mission.id" class="mission-row" :class="{ selected: selectedId === mission.id }">
-          <button class="mission-select" @click="selectedId = mission.id"><strong>{{ mission.name }}</strong><small>v{{ mission.revision }} · {{ mission.mode === 'waypoint' ? `${mission.waypoints.length} 个目标点` : `${mission.preview.area?.toFixed(1)} m²` }}</small><small>{{ new Date(mission.updated_at).toLocaleString('zh-CN') }}</small></button>
-          <el-button link type="danger" @click="remove(mission.id)">删除</el-button>
+          <div class="mission-main"><button class="mission-select" @click="choose(mission)"><strong>{{ mission.name }}</strong><small>v{{ mission.revision }} · {{ mission.mode === 'waypoint' ? `${mission.waypoints.length} 个目标点` : `${mission.preview.area?.toFixed(1)} m²` }}</small><small>{{ new Date(mission.updated_at).toLocaleString('zh-CN') }}</small></button>
+            <el-button link type="danger" @click="remove(mission.id)">删除</el-button></div>
+          <div v-if="kind === 'coverage'" class="saved-plan-list">
+            <small>{{ mission.coverage_plans?.length ? '已保存规划路径（本版本，最近10条）' : '生成后点击“保存规划路径”，将在此显示' }}</small>
+            <button v-for="plan in mission.coverage_plans || []" :key="plan.id" class="saved-plan" :class="{ chosen: selectedId === mission.id && selectedPlanId === plan.id }" @click="choose(mission, plan.id)">
+              <span>↳ {{ plan.planning_strategy === 'SMART' ? '一键优化路径' : '覆盖路径' }}</span><small>{{ new Date(plan.created_at).toLocaleString('zh-CN') }}</small>
+            </button>
+          </div>
         </div>
       </el-card>
-      <TaskEditor :key="kind" :mission="selected" :kind="kind" :defaults="context.defaults[kind]" @saved="saved" />
+      <TaskEditor :key="kind" :mission="selected" :plan-id="selectedPlanId" :kind="kind" :defaults="context.defaults[kind]" @saved="saved" @planned="selectedPlanId = undefined" @path-saved="pathSaved" />
     </div>
     <el-empty v-else-if="!loading" description="任务服务未连接，请启动 FastAPI 后端" />
     <TaskRunHistory :kind="kind" />
@@ -58,6 +74,7 @@ function saved(value: MissionDocument) { if (value.mode === kind.value) selected
 .page-title { display: flex; justify-content: space-between; gap: 12px; align-items: center; margin-bottom: 20px; }.page-title h1 { font-size: 24px; margin: 0 0 9px; }.page-title p { color: #7e8d83; font-size: 13px; margin: 0; line-height: 1.8; }
 .workflow { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-bottom: 20px; color: #5f7567; font-size: 13px; }.workflow span { display: flex; align-items: center; gap: 8px; }.workflow b { display: grid; place-items: center; width: 23px; height: 23px; border-radius: 50%; background: #e4efe8; color: #28784c; }
 .workspace-grid { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 20px; margin-top: 20px; }.mission-list { align-self: start; }.new-task { width: 100%; margin: 16px 0; }.empty-list { padding: 20px 0; color: #829087; font-size: 13px; line-height: 1.8; }
-.mission-row { display: flex; justify-content: space-between; gap: 8px; padding: 12px 8px; border-bottom: 1px solid #e6ece8; border-radius: 6px; }.mission-row.selected { background: #eaf4ec; }.mission-select { background: none; border: 0; text-align: left; cursor: pointer; color: #344c3b; overflow-wrap: anywhere; }.mission-select small { display: block; color: #839087; font-size: 11px; margin-top: 7px; }
+.mission-row { padding: 12px 8px; border-bottom: 1px solid #e6ece8; border-radius: 6px; }.mission-main { display: flex; justify-content: space-between; gap: 8px; }.mission-row.selected { background: #eaf4ec; }.mission-select { background: none; border: 0; text-align: left; cursor: pointer; color: #344c3b; overflow-wrap: anywhere; }.mission-select small { display: block; color: #839087; font-size: 11px; margin-top: 7px; }
+.saved-plan-list { margin: 12px 0 0 8px; color: #7b8d80; font-size: 12px; }.saved-plan { display: block; width: 100%; border: 0; border-left: 2px solid #dbe5dd; background: none; text-align: left; padding: 8px; color: #456550; cursor: pointer; }.saved-plan small { display: block; font-size: 10px; color: #7b8d80; margin: 5px 0 0 12px; }.saved-plan.chosen { background: #dbeee1; border-color: #25845c; }
 @media (max-width: 1200px) { .workspace-grid { grid-template-columns: 1fr; }.mission-list :deep(.el-card__body) { max-height: 260px; overflow-y: auto; } }
 </style>

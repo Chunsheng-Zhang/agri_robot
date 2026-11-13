@@ -13,12 +13,15 @@ from typing import Literal
 
 import yaml
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import Field, ValidationError
 from starlette.background import BackgroundTask
 
 from .devices import device_cache, service_call
 from .missions import Mission, MissionStore, StrictModel, WaypointParameters, CoverageParameters, atomic_json, now, DELETABLE_RUN_STATES
+from .coverage_quality_jobs import PlanQualityJobs, snapshot as quality_snapshot
+from .coverage_map import CoverageMaps
+from .saved_plans import SavedPlans, read_plan
 
 
 class ManualCommand(StrictModel):
@@ -45,6 +48,9 @@ class Workspace:
         self.active = None
         self.plan_sequence = None
         self.plan_requested = None
+        self.quality_jobs = PlanQualityJobs()
+        self.coverage_maps = CoverageMaps()
+        self.saved_plans = SavedPlans()
 
     def gateway(self):
         node = self.require_bridge().node
@@ -154,6 +160,13 @@ class Workspace:
                 else:
                     run['reference_fingerprint'] = signature
                     state = 'READY'
+                    if run.get('coverage_quality_version') == 1:
+                        try:
+                            self.quality_jobs.submit(self.store.run_path(run['id']))
+                        except (OSError, ValueError, RuntimeError) as exc:
+                            # Diagnostics must not change the validated path or
+                            # motion permission. Report the failure separately.
+                            run['coverage_quality_error'] = str(exc)
         else:
             status = snapshot['waypoint' if run['mode'] == 'waypoint' else 'tracking']
             if not status['fresh']:
@@ -177,9 +190,18 @@ class Workspace:
                 self.lock.release()
         origin, source = self.origin()
         active = {k: v for k, v in (self.active or {}).items() if not k.startswith('_')}
+        if active:
+            active['coverage_quality'] = quality_snapshot(self.store.run_path(active['id']),active)
+            if active.get('planning_strategy') in ('SMART','REUSED'):
+                from .optimization_results import summary
+                active['optimization']=summary(self.store.run_path(active['id']))
+        missions=self.store.list()
+        plans=self.saved_plans.summaries(self.store,missions)
+        for mission in missions:
+            if mission['mode']=='coverage':mission['coverage_plans']=plans.get(mission['id'],[])
         return {'origin': origin, 'origin_source': source, 'defaults': self.store.defaults(),
                 'synthetic': getattr(self, 'synthetic', False),
-                'missions': self.store.list(), 'runs': self.store.list_runs(), 'active_run': active or None,
+                'missions': missions, 'runs': self.store.list_runs(), 'active_run': active or None,
                 'config_file': str(self.store.config_path),
                 'events': device_cache.recent_events(),
                 'mode': device_cache.snapshot()['safety'].get('mode')}
@@ -204,33 +226,110 @@ class Workspace:
         self.store.preview(Mission(**{k: mission[k] for k in ('name', 'mode', 'parameters', 'waypoints', 'boundary')}), origin)
         return mission
 
-    def plan(self, identity):
+    def plan(self, identity, optimized=False):
         with self.operation():
             safety = self.require_idle('coverage')
             mission = self.validate_mission(identity, 'coverage')
             gateway = self.gateway()
             run = self.store.create_run(mission, safety['mode_revision'], 'planning')
+            # New planning rounds opt in; never backfill archived experiments.
+            run['coverage_quality_version'] = 1
+            run['plan_save_required'] = True
+            run['planning_strategy'] = 'SMART' if optimized else 'MANUAL'
+            if optimized:run['planning_policy']='POINT_TURN_ANGLE'
+            self.store.save_run(run)
             directory = self.store.run_path(run['id'])
             boundary = directory / 'config/field.json'
             atomic_json(boundary, mission['boundary'])
             p = mission['parameters']
             self.active = run
             try:
-                gateway.configure_server({
+                if not optimized:gateway.configure_server({
+                    'robot_width': float(p['robot_width']),
                     'operation_width': float(p['operation_width']), 'min_turning_radius': float(p['min_turning_radius']),
                     'default_turn_point_distance': float(p['sampling_distance'])})
+                if p['route_mode'] == 'CONTOUR' and not optimized:
+                    curve = gateway.get_parameters('coverage_server', ['linear_curv_change'])
+                    gateway.parameters('coverage_adapter', {'operation_width':float(p['operation_width']),
+                        'min_turning_radius':float(p['min_turning_radius']),
+                        'linear_curv_change':float(curve['linear_curv_change'])})
+                if optimized:
+                    settings={k:p[k] for k in ('operation_width','robot_width','robot_length',
+                        'rotation_safety_margin','rotation_center_x','rotation_center_y',
+                        'sampling_distance','quality_resolution')}
+                    gateway.parameters('coverage_adapter',{'optimization_config':json.dumps(settings,allow_nan=False)})
                 gateway.parameters('coverage_adapter', {**{k: p[k] for k in (
+                    'robot_width','robot_length','rotation_safety_margin','rotation_center_x','rotation_center_y',
                     'headland_width', 'swath_angle', 'sampling_distance', 'route_mode', 'angle_mode', 'path_continuity')},
+                    'allow_reverse':False if optimized else bool(p.get('allow_reverse',False)),
                     'boundary_file': str(boundary), 'output_directory': str(directory / 'paths'), 'generate_decomp': False})
                 self.plan_sequence = self.robot_snapshot().get('reference_sequence', 0)
                 self.plan_requested = monotonic()
-                result = gateway.trigger('/planning/plan')
+                result = gateway.trigger('/planning/optimize' if optimized else '/planning/plan')
                 run['state'] = 'PLANNING'
                 self.store.save_run(run)
                 self.event('PLAN_REQUESTED', run_id=run['id'], mission_id=identity)
                 return {**result, 'run': run}
             except Exception as exc:
                 run['state'], run['reason'] = 'FAILED', str(getattr(exc, 'detail', exc))
+                self.store.save_run(run)
+                raise
+
+    def save_plan(self, identity, plan_id):
+        # Persist a validated plan in the reusable list. No ROS calls or control
+        # ownership are needed: saving is separate from loading and starting.
+        with self.operation():
+            mission=self.store.get(identity)
+            if mission.get('mode')!='coverage':raise HTTPException(422,'只有覆盖任务可以保存规划路径')
+            if mission['projection']!=self.origin()[0]:raise HTTPException(409,'当前固定原点与任务不一致')
+            run,_,_,fingerprint=read_plan(self.store,mission,plan_id,allow_pending_save=True)
+            if run.get('saved_plan_version')==1:
+                return {'success':True,'already_saved':True,'run':run}
+            if run.get('stage')!='planning' or run.get('state')!='READY':
+                raise HTTPException(409,'请等待当前规划成功就绪，再保存规划路径')
+            run.update(saved_plan_version=1,plan_save_required=False,plan_saved_at=now(),reference_fingerprint=fingerprint)
+            self.store.save_run(run)
+            if self.active and self.active.get('id')==plan_id:self.active.update(run)
+            self.saved_plans.updated=-float('inf')
+            self.event('PLANNED_PATH_SAVED',run_id=plan_id,mission_id=identity)
+            return {'success':True,'already_saved':False,'run':run}
+
+    def load_plan(self, identity, plan_id):
+        with self.operation():
+            safety=self.require_idle('coverage')
+            mission=self.validate_mission(identity,'coverage')
+            source,saved,points,fingerprint=read_plan(self.store,mission,plan_id)
+            run=self.store.create_run(mission,safety['mode_revision'],'planning')
+            run.update(coverage_quality_version=1,saved_plan_version=1,source_plan_id=plan_id,planning_strategy='REUSED')
+            if source.get('planning_policy'):run['planning_policy']=source['planning_policy']
+            self.store.save_run(run)
+            directory=self.store.run_path(run['id'])
+            self.active=run
+            try:
+                atomic_json(directory/'config/field.json',mission['boundary'])
+                atomic_json(directory/'config/saved_path.json',saved)
+                # Keep the original decision/model as provenance, not a new
+                # optimization. All new telemetry goes to this new round.
+                if source.get('planning_strategy')=='SMART':
+                    from .optimization_results import read as read_optimization
+                    try:report=read_optimization(self.store.run_path(plan_id))
+                    except (OSError,ValueError,TypeError):report=None
+                    if report and report.get('reference_fingerprint')==fingerprint:
+                        atomic_json(directory/'paths/optimization.json',{**report,'reused_from':plan_id})
+                gateway=self.gateway()
+                gateway.parameters('coverage_adapter',{'boundary_file':str(directory/'config/field.json'),
+                    'output_directory':str(directory/'paths'),'saved_path_file':str(directory/'config/saved_path.json'),
+                    'robot_width':float(mission['parameters']['robot_width']),
+                    **{k:float(mission['parameters'][k]) for k in ('robot_length','rotation_safety_margin','rotation_center_x','rotation_center_y')},
+                    'allow_reverse':bool(mission['parameters'].get('allow_reverse',False))})
+                self.plan_sequence=self.robot_snapshot().get('reference_sequence',0)
+                self.plan_requested=monotonic()
+                result=gateway.trigger('/planning/load')
+                run['state']='PLANNING';self.store.save_run(run)
+                self.event('SAVED_PATH_LOADED',run_id=run['id'],source_plan_id=plan_id)
+                return {**result,'run':run}
+            except Exception as exc:
+                run['state'],run['reason']='FAILED',str(getattr(exc,'detail',exc))
                 self.store.save_run(run)
                 raise
 
@@ -258,9 +357,18 @@ class Workspace:
                     run.get('reference_fingerprint') != data.get('reference_fingerprint'))):
                     raise HTTPException(409, '请先为当前任务成功规划，修改任务/模式/参考路径后须重新规划')
                 directory = self.store.run_path(run['id'])
+                if p.get('allow_reverse',False) or run.get('planning_policy')=='POINT_TURN_ANGLE':
+                    from agri_base.path_geometry import motion_signature
+                    files=list((directory/'paths').glob('coverage_*.json'))
+                    if len(files)!=1:raise HTTPException(409,'缺少唯一的带方向覆盖路径，请重新规划')
+                    saved=json.loads(files[0].read_text())
+                    expected=motion_signature([(p['x'],p['y'],p['yaw']) for p in saved['points']])
+                    if expected!=data.get('reference_motion_fingerprint'):
+                        raise HTTPException(409,'参考路径航向或方向不一致，请重新加载/规划后开始')
                 tracker = {k: p[k] for k in ('lookahead', 'speed', 'max_angular', 'completion_tolerance',
                                             'start_tolerance', 'search_window', 'max_path_error')}
-                gateway.parameters('path_tracker', {**tracker, 'trajectory_directory': str(directory / 'tracks')})
+                gateway.parameters('path_tracker', {**tracker, 'allow_reverse':bool(p.get('allow_reverse',False)),
+                    'trajectory_directory': str(directory / 'tracks')})
                 source = 'tracking'
             else:
                 run = self.store.create_run(mission, safety['mode_revision'], 'execution')
@@ -356,9 +464,38 @@ def install_routes(app, require_bridge, robot_snapshot):
     def plan(identity: str):
         return workspace.plan(identity)
 
+    @router.post('/api/missions/{identity}/optimize')
+    def optimize(identity: str):
+        return workspace.plan(identity,optimized=True)
+
     @router.post('/api/missions/{identity}/start')
     def start(identity: str):
         return workspace.start(identity)
+
+    @router.get('/api/missions/{identity}/plans/{plan_id}/path')
+    def saved_path(identity: str, plan_id: str):
+        try:
+            mission=workspace.store.get(identity)
+            if mission['projection']!=workspace.origin()[0]:raise ValueError('当前固定原点与任务不一致')
+            run,data,points,fingerprint=read_plan(workspace.store,mission,plan_id)
+            original=json.loads((workspace.store.run_path(plan_id)/'config/mission.json').read_text(encoding='utf-8'))
+            small={k:v for k,v in run.items() if not k.startswith('_')}
+            small['coverage_quality']=quality_snapshot(workspace.store.run_path(plan_id),run)
+            if run.get('planning_strategy')=='SMART':
+                from .optimization_results import summary
+                small['optimization']=summary(workspace.store.run_path(plan_id))
+            return {'run':small,'preview':original['preview'],'count':len(points),'frame_id':'map','projection':run['projection'],
+                    'fingerprint':fingerprint,'points':[{'x':x,'y':y} for x,y,_ in points]}
+        except FileNotFoundError as exc:raise HTTPException(404,'已保存路径不存在') from exc
+        except (ValueError,OSError,KeyError,TypeError) as exc:raise HTTPException(409,str(exc)) from exc
+
+    @router.post('/api/missions/{identity}/plans/{plan_id}/load')
+    def load_plan(identity: str, plan_id: str):
+        return workspace.load_plan(identity,plan_id)
+
+    @router.post('/api/missions/{identity}/plans/{plan_id}/save')
+    def save_plan(identity: str, plan_id: str):
+        return workspace.save_plan(identity,plan_id)
 
     @router.post('/api/planning/cancel')
     def cancel_plan():
@@ -471,10 +608,12 @@ def install_routes(app, require_bridge, robot_snapshot):
             recorder = getattr(getattr(getattr(bridge, 'node', None), 'workspace_ros', None), 'recorder', None)
             if recorder and recorder.busy(directory):
                 raise HTTPException(409, '任务采集或指标分析正在收尾，请稍后再下载归档')
+            if workspace.quality_jobs.busy(directory):
+                raise HTTPException(409, '覆盖质量评价正在生成，请稍后再下载归档')
         except ValueError as exc:
             raise HTTPException(404, '任务记录不存在') from exc
         files = [p for p in directory.rglob('*') if p.is_file() and not p.is_symlink()
-                 and p.suffix in ('.json', '.yaml', '.csv', '.jsonl', '.bin', '.png', '.md') and directory in p.resolve().parents]
+                 and p.suffix in ('.json', '.yaml', '.csv', '.jsonl', '.bin', '.png', '.svg', '.md') and directory in p.resolve().parents]
         if sum(p.stat().st_size for p in files) > 200 * 1024 * 1024:
             raise HTTPException(413, '任务数据超过 200 MB，请从实验目录直接复制')
         archive_cache = workspace.store.root / '.runtime/archives'
@@ -489,5 +628,53 @@ def install_routes(app, require_bridge, robot_snapshot):
             filename.unlink(missing_ok=True)
             raise
         return FileResponse(filename, filename=f'{identity}.zip', background=BackgroundTask(filename.unlink, missing_ok=True))
+
+    @router.get('/api/runs/{identity}/optimization')
+    def optimization_report(identity: str):
+        from .optimization_results import read
+        try:
+            value=read(workspace.store.run_path(identity))
+        except (ValueError,OSError) as exc:
+            raise HTTPException(404,'优化报告不可读取') from exc
+        if value is None:raise HTTPException(404,'本轮没有优化报告')
+        return value
+
+    @router.get('/api/runs/{identity}/coverage-map')
+    def coverage_map(identity: str):
+        try:
+            directory=workspace.store.run_path(identity)
+            run=json.loads((directory/'run.json').read_text())
+        except (ValueError,OSError) as exc:
+            raise HTTPException(404,'任务记录不存在') from exc
+        if run.get('mode')!='coverage':
+            raise HTTPException(422,'只有覆盖任务具有作业区域图层')
+        return workspace.coverage_maps.request(directory,run)
+
+    @router.get('/api/runs/{identity}/coverage-map/{source}/{layer}.png')
+    def coverage_map_image(identity: str,source: str,layer: str,v: str):
+        try:
+            workspace.store.run_path(identity)
+        except ValueError as exc:
+            raise HTTPException(404,'任务记录不存在') from exc
+        if source not in ('planned','actual') or layer not in ('completed','remaining','overlap'):
+            raise HTTPException(404,'作业图层不存在')
+        value=workspace.coverage_maps.image(identity,source,layer,v)
+        if value is None:raise HTTPException(404,'作业图层已过期，请刷新地图')
+        return Response(value,media_type='image/png',headers={'Cache-Control':'private, max-age=31536000, immutable'})
+
+    @router.get('/api/runs/{identity}/coverage-quality/{artifact}')
+    def quality_artifact(identity: str, artifact: str):
+        names = {'plan.png': 'coverage_quality_plan.png', 'actual.png': 'coverage_quality_actual.png',
+                 'report.md': 'coverage_quality_report.md', 'metrics.json': 'coverage_quality.json'}
+        try:
+            directory = workspace.store.run_path(identity)
+        except ValueError as exc:
+            raise HTTPException(404, '任务记录不存在') from exc
+        if artifact not in names:
+            raise HTTPException(404, '评价文件不存在')
+        target = directory/'analysis'/names[artifact]
+        if not target.is_file() or target.is_symlink() or directory not in target.resolve().parents:
+            raise HTTPException(404, '评价尚未生成')
+        return FileResponse(target,media_type='image/png' if artifact.endswith('.png') else None)
 
     app.include_router(router)

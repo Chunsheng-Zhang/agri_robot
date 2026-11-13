@@ -138,3 +138,36 @@ def test_textures_are_north_up_hole_transparent_and_repeat_separate(tmp_path):
     assert all(p[1,1,3] == 0 for p in pixels.values())
     for i in range(4): state.textures(counts+i)
     assert len(state.images) == 2
+
+
+def test_spawned_worker_and_http_layers_are_read_only(tmp_path,monkeypatch):
+    from fastapi.testclient import TestClient
+    from agri_backend import main
+    store, run, directory, _, _ = fixture_run(tmp_path)
+    service = CoverageMaps()
+    monkeypatch.setattr(main.app.state.workspace,'store',store)
+    monkeypatch.setattr(main.app.state.workspace,'coverage_maps',service)
+    client = TestClient(main.app)  # No lifespan / ROS.
+    before = sorted(p.relative_to(directory) for p in directory.rglob('*'))
+    try:
+        result = None
+        deadline = time.monotonic()+20
+        while time.monotonic()<deadline:
+            response = client.get(f'/api/runs/{run["id"]}/coverage-map')
+            assert response.status_code == 200
+            result = response.json()
+            if result['state'] != 'PENDING': break
+            time.sleep(.05)
+        assert result['state'] == 'READY',result
+        for source in ('planned','actual'):
+            version = result['sources'][source]['version']
+            for layer in ('completed','remaining','overlap'):
+                image = client.get(f'/api/runs/{run["id"]}/coverage-map/{source}/{layer}.png?v={version}')
+                assert image.status_code == 200 and image.headers['content-type'] == 'image/png'
+                assert image.content.startswith(b'\x89PNG')
+        assert client.get(f'/api/runs/{run["id"]}/coverage-map/actual/other.png?v=x').status_code == 404
+        assert client.get(f'/api/runs/{run["id"]}/coverage-map/actual/completed.png?v=old').status_code == 404
+        assert client.get('/api/runs/not-a-run/coverage-map').status_code == 404
+        assert before == sorted(p.relative_to(directory) for p in directory.rglob('*'))
+    finally:
+        service.close(wait=True)

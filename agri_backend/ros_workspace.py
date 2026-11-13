@@ -34,7 +34,7 @@ class RosWorkspace:
                       'set': SetParametersAtomically, 'lifecycle': ManageLifecycleNodes, 'lease': AcquireControl}
         for mode in ('base', 'waypoint', 'coverage'):
             self.add(f'/system/mode/{mode}', 'trigger')
-        for action in ('plan', 'cancel'):
+        for action in ('plan', 'cancel', 'optimize', 'load'):
             self.add(f'/planning/{action}', 'trigger')
         for name in ('waypoint', 'path_tracker', 'coverage_adapter', 'coverage_server'):
             self.add(f'/{name}/get_parameters', 'get')

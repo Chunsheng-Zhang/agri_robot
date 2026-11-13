@@ -165,8 +165,47 @@ def test_existing_completed_analysis_generates_quality_report(tmp_path):
     assert (directory/'analysis/status.json').is_file()
 
 
+def test_http_artifact_whitelist_and_workspace_small_snapshot(tmp_path,monkeypatch):
+    from fastapi.testclient import TestClient
+    from agri_backend import main
+    from agri_backend.coverage_quality_jobs import snapshot
+    store,run,directory,_,_=make_run(tmp_path)
+    planned_quality(directory)
+    atomic_json(directory/'analysis/coverage_quality_plan_status.json',{'state':'SUCCEEDED'})
+    small=snapshot(directory,run)
+    assert small['planned']['metrics']['field']['coverage_percent']>0
+    assert 'sources_sha256' not in small['planned']
+    monkeypatch.setattr(main.app.state.workspace,'store',store)
+    client=TestClient(main.app)  # No lifespan: no ROS/hardware.
+    response=client.get(f'/api/runs/{run["id"]}/coverage-quality/plan.png')
+    assert response.status_code==200 and response.headers['content-type']=='image/png'
+    assert client.get(f'/api/runs/{run["id"]}/coverage-quality/mission.json').status_code==404
+    assert client.get(f'/api/runs/{run["id"]}/coverage-quality/actual.png').status_code==404
 
 
+def test_verified_planning_result_schedules_quality_but_mismatched_path_does_not(tmp_path,monkeypatch):
+    import hashlib
+    from agri_backend.workspace import Workspace
+    from agri_backend.devices import device_cache
+    store,run,directory,_,points=make_run(tmp_path)
+    run['state']='PLANNING'
+    store.save_run(run)
+    data={'reference_sequence':1,'reference_path':points,'reference_fingerprint':'wrong'}
+    workspace=Workspace(lambda:None,lambda:data,store)
+    scheduled=[]
+    workspace.quality_jobs.close()
+    workspace.quality_jobs=SimpleNamespace(submit=lambda path:scheduled.append(path))
+    workspace.active=run
+    workspace.plan_requested=0
+    workspace.plan_sequence=0
+    monkeypatch.setattr(device_cache,'values',{})
+    device_cache.update('safety',{'mode':'coverage','mode_revision':1})
+    device_cache.update('planning',{'state':'SUCCEEDED','output_directory':str(directory/'paths')})
+    workspace.sync()
+    assert run['state']=='WAITING_PATH' and not scheduled
+    data['reference_fingerprint']=hashlib.sha256(json.dumps(['map',points],sort_keys=True).encode()).hexdigest()
+    workspace.sync()
+    assert run['state']=='READY' and scheduled==[directory]
 
 
 def test_background_plan_worker_runs_real_offline_subprocess(tmp_path):

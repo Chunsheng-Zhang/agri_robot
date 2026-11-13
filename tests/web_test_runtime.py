@@ -120,12 +120,21 @@ class SyntheticSystem:
         self.bench.create_timer(0.05, sensors)
         main.app.state.ros_bridge = SimpleNamespace(node=self.backend, started=True, error=None)
         self.workspace = main.app.state.workspace
+        # Each synthetic app lifetime needs its own map executor. The previous
+        # case closes it; reusing that closed cache leaves later maps PENDING.
+        from agri_backend.coverage_map import CoverageMaps
+        self.workspace.coverage_maps.close(wait=True)
+        self.workspace.coverage_maps = CoverageMaps()
         self.workspace.store = MissionStore(self.directory)
         self.workspace.store.config_path = config
         self.workspace.active = None
         self.workspace.synthetic = True
         self.workspace.robot_snapshot = main.robot_state.snapshot
         self.app = main.app
+        # Several integration cases may share one pytest process. Replace only
+        # test-only routes, otherwise closures can retain a previous fake robot.
+        self.app.router.routes[:]=[route for route in self.app.router.routes
+            if getattr(route,'path','') not in ('/api/test-environment','/api/test/align-path-start')]
 
         @self.app.get('/api/test-environment')
         def test_environment():
@@ -146,6 +155,7 @@ class SyntheticSystem:
 
     def close(self):
         import rclpy
+        self.workspace.coverage_maps.close(wait=True)
         self.executor.shutdown(timeout_sec=3)
         self.thread.join(timeout=3)
         for node in reversed(self.nodes):

@@ -133,8 +133,9 @@ def test_path_api_preserves_frame_and_filters_invalid_ros_data(monkeypatch):
     main.RobotStatusNode.reference_path_callback(None, msg)
     main.RobotStatusNode.tracked_path_callback(None, msg)
     for kind in ('reference', 'tracked'):
-        assert client.get(f'/api/robot/path/{kind}').json() == {
-            'count': 1, 'frame_id': 'map', 'points': [{'x': 12.3, 'y': -4.5}]}
+        expected = {'count': 1, 'frame_id': 'map', 'points': [{'x': 12.3, 'y': -4.5}]}
+        if kind == 'reference': expected['fingerprint'] = main.robot_state.snapshot()['reference_fingerprint']
+        assert client.get(f'/api/robot/path/{kind}').json() == expected
     msg.poses[0].pose.position.x = float('nan')
     main.RobotStatusNode.tracked_path_callback(None, msg)
     assert client.get('/api/robot/path/tracked').json()['points'] == []

@@ -135,6 +135,7 @@ class RobotState:
             "reference_frame": "",
             "reference_sequence": 0,
             "reference_fingerprint": "",
+            "reference_motion_fingerprint": "",
             "tracked_path": [],
             "tracked_frame": "",
             "waypoint_path": [],
@@ -431,6 +432,12 @@ if ROS_AVAILABLE:
                 }
                 for pose in msg.poses
             ]
+            from agri_base.path_geometry import motion_signature
+            from agri_base.runtime import yaw_of
+            try:
+                motion_fingerprint=motion_signature([(p.pose.position.x,p.pose.position.y,yaw_of(p.pose.orientation))
+                                                       for p in msg.poses])
+            except (ValueError,TypeError):motion_fingerprint=''
 
             robot_state.update(
                 reference_path_points=len(points),
@@ -439,6 +446,7 @@ if ROS_AVAILABLE:
                 reference_sequence=robot_state.snapshot()['reference_sequence'] + 1,
                 reference_fingerprint=hashlib.sha256(json.dumps(
                     [msg.header.frame_id, points], allow_nan=True, sort_keys=True).encode()).hexdigest(),
+                reference_motion_fingerprint=motion_fingerprint,
             )
 
         # ====================================================
@@ -598,6 +606,8 @@ async def lifespan(app: FastAPI):
 
     finally:
         bridge.stop()
+        app.state.workspace.quality_jobs.close()
+        app.state.workspace.coverage_maps.close()
         print("[ROS 2] 桥接已关闭")
 
 
@@ -861,6 +871,7 @@ def get_reference_path():
         "count": len(points),
         "points": points,
         "frame_id": data['reference_frame'],
+        "fingerprint": data['reference_fingerprint'],
     }
 
 

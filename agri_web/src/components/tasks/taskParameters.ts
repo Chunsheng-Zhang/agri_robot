@@ -1,7 +1,10 @@
 import type { MissionMode } from '../../api/workspace'
-export interface ParameterField { key: string; label: string; unit?: string; min?: number; max?: number; step?: number; degrees?: boolean; choices?: Record<string, string>; hint?: string }
+export interface ParameterField { key: string; label: string; unit?: string; min?: number; max?: number; step?: number; degrees?: boolean; choices?: Record<string, string>; toggle?: boolean; hint?: string }
 const shared: ParameterField[] = [
   { key: 'max_angular', label: '最大角速度', unit: 'rad/s', min: 0.01, max: 2, step: 0.05 },
+]
+export const coverageQualityFields: ParameterField[] = [
+  { key: 'quality_resolution', label: '覆盖评价网格间距', unit: 'm', min: 0.01, max: 0.5, step: 0.01, hint: '默认0.05m；地块较大时会按计算预算加粗，实际间距与两级网格敏感性写入报告' },
 ]
 export const parameterFields: Record<MissionMode, ParameterField[]> = {
   waypoint: [
@@ -15,16 +18,20 @@ export const parameterFields: Record<MissionMode, ParameterField[]> = {
     { key: 'distance_kp', label: '距离控制增益', min: 0.01, max: 10, step: 0.1, hint: '基础线速度=增益×目标距离，再限幅并按航向偏差减速；越大越晚开始降速' },
   ],
   coverage: [
-    { key: 'operation_width', label: '作业幅宽', unit: 'm', min: 0.1, max: 20, step: 0.1 },
+    { key: 'robot_width', label: '车体宽度 robot_width', unit: 'm', min: 0.05, max: 20, step: 0.01, hint: '默认0.2m；手工曲线按半车宽检查，智能原地转向按车体长宽的完整旋转包络检查。修改后保存并重新规划' },
+    { key: 'robot_length', label: '车体包络长度', unit: 'm', min: 0.05, max: 20, step: 0.01, hint: '默认0.45m为估计值；填写以旋转中心为基准的车辆及随车机具包络尺寸' },
+    { key: 'rotation_safety_margin', label: '原地转向安全余量', unit: 'm', min: 0, max: 5, step: 0.01, hint: '默认0.05m；智能规划按车体对角线半径加此余量设置最小安全地头' },
+    { key: 'operation_width', label: '机具有效作业宽度', unit: 'm', min: 0.1, max: 20, step: 0.1, hint: '人工填写实际有效作业宽度；智能规划同时用于条带间距与覆盖评价，不自动调整' },
     { key: 'min_turning_radius', label: '最小转弯半径', unit: 'm', min: 0.05, max: 20, step: 0.1, hint: '用于前进地头曲线；履带原地转向不等同于零半径 Dubins 路径' },
-    { key: 'headland_width', label: '地头预留宽度', unit: 'm', min: 0, max: 50, step: 0.5 },
+    { key: 'headland_width', label: '地头预留宽度', unit: 'm', min: 0, max: 50, step: 0.5, hint: '仅手工“生成覆盖路径”采用此值；一键优化按车辆长宽和安全余量自动计算最小安全地头' },
     { key: 'swath_angle', label: '作业方向', unit: '°', min: -180, max: 180, step: 5, degrees: true, hint: '网格东向为 0°，逆时针为正；不是设备北零航向' },
-    { key: 'route_mode', label: '条带作业顺序', choices: { BOUSTROPHEDON: '牛耕', SNAKE: '蛇形', SPIRAL: '螺旋' } },
+    { key: 'route_mode', label: '条带作业顺序', choices: { BOUSTROPHEDON: '牛耕', SNAKE: '蛇形', SPIRAL: '螺旋', CONTOUR: '回形' }, hint: '回形为从内向外连续展开的开口路径，层间直接平滑过渡，不再逐圈闭合；层间距采用作业幅宽，仍受地头预留、转弯半径和净空约束' },
     { key: 'angle_mode', label: '作业方向选择', choices: { SET_ANGLE: '指定方向', BRUTE_FORCE: '自动搜索方向' } },
-    { key: 'path_continuity', label: 'Dubins 转弯曲率', choices: { CONTINUOUS: '连续曲率', DISCONTINUOUS: '圆弧与直线' } },
+    { key: 'path_continuity', label: '转弯曲率形式', choices: { DUBINS: 'Dubins（前进，圆弧与直线）', DUBINS_CC: 'Dubins CC（前进，连续曲率）', REEDS_SHEPP: 'Reeds–Shepp（可前进、倒车）', REEDS_SHEPP_HC: 'Reeds–Shepp HC（可前进、倒车，混合曲率）' }, hint: '仅手工规划采用此曲线；按设定最小半径生成。Reeds–Shepp 的倒车段需要勾选允许倒车；一键优化固定原地转向' },
+    { key: 'allow_reverse', label: '允许倒车', toggle: true, hint: '默认关闭；勾选并保存、重新规划后，允许执行Reeds–Shepp倒车段，换向时先停车对齐。Dubins仍只前进；现有前方180°雷达配置不保护车后方' },
     { key: 'sampling_distance', label: '路径采样间距', unit: 'm', min: 0.02, max: 1, step: 0.02 },
     { key: 'lookahead', label: 'Pure Pursuit 前视距离', unit: 'm', min: 0.1, max: 10, step: 0.1 },
-    { key: 'speed', label: '目标行驶速度', unit: 'm/s', min: 0.01, max: 1, step: 0.05, hint: '前进式跟踪的目标速度，最大1 m/s；会随转弯和终点减速，负线速度边界不表示支持倒车跟踪' },
+    { key: 'speed', label: '目标行驶速度', unit: 'm/s', min: 0.01, max: 1, step: 0.05, hint: '目标速度大小，最大1 m/s；随转弯、换向点和终点减速。允许倒车时由路径方向决定线速度正负' },
     { key: 'max_angular', label: '最大角速度', unit: 'rad/s', min: 0.01, max: 1, step: 0.05, hint: '角速度指令在正负此值内限幅，最大允许±1 rad/s；实际输出由跟踪误差和曲率决定' },
     { key: 'completion_tolerance', label: '终点完成阈值', unit: 'm', min: 0.02, max: 2, step: 0.05 },
     { key: 'start_tolerance', label: '直接跟踪起点距离', unit: 'm', min: 0.05, max: 5, step: 0.1, hint: '超过此距离会先单点导航到覆盖起点，再自动跟踪；不限制单点接近的总距离' },
@@ -32,3 +39,8 @@ export const parameterFields: Record<MissionMode, ParameterField[]> = {
     { key: 'max_path_error', label: '最大路径偏离', unit: 'm', min: 0.05, max: 10, step: 0.1 },
   ],
 }
+
+// The smart policy is fixed; these exports remain for external parameter tools.
+export const smartPlanningFields: ParameterField[] = []
+export const smartSearchFields: ParameterField[] = []
+export const smartAdvancedFields: ParameterField[] = []

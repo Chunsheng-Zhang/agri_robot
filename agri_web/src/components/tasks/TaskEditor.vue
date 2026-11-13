@@ -3,34 +3,62 @@ import { computed, ref, watch, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRealtime } from '../../composables/useRealtime'
 import { useWorkspace } from '../../composables/useWorkspace'
-import { saveMission, previewMission, missionAction, downloadJson } from '../../api/workspace'
-import type { MissionDocument, MissionInput, MissionMode, GeoPoint, Preview, Projection } from '../../api/workspace'
-import { parameterFields } from './taskParameters'
+import { saveMission, previewMission, missionAction, downloadJson, getSavedPlanPath, loadSavedPlan, savePlannedPath } from '../../api/workspace'
+import type { MissionDocument, MissionInput, MissionMode, GeoPoint, Preview, Projection, SavedPlanPath } from '../../api/workspace'
+import { coverageQualityFields, parameterFields } from './taskParameters'
 import { defaultTaskPoints } from './defaultTaskPoints'
 import type { ParameterField } from './taskParameters'
 import FieldMap from '../dashboard/FieldMap.vue'
+import CoverageQuality from './CoverageQuality.vue'
 
 interface Row { longitude: string; latitude: string; dwell_time: number }
-const props = defineProps<{ mission?: MissionDocument | null; kind: MissionMode; defaults: Readonly<Record<string, number | string>> }>()
-const emit = defineEmits<{ saved: [value: MissionDocument] }>()
+const props = defineProps<{ mission?: MissionDocument | null; planId?: string; kind: MissionMode; defaults: Readonly<Record<string, number | string | boolean>> }>()
+const emit = defineEmits<{ saved: [value: MissionDocument]; planned: []; pathSaved: [missionId: string, planId: string] }>()
 const { devices, isFresh, safetyFresh, refresh } = useRealtime()
 const { context, refresh: refreshWorkspace } = useWorkspace()
-const name = ref(''), parameters = ref<Record<string, number | string>>({}), rows = ref<Row[]>([])
+const name = ref(''), parameters = ref<Record<string, number | string | boolean>>({}), rows = ref<Row[]>([])
 const rings = ref<Row[][]>([]), ringIndex = ref(0), id = ref<string>(), revision = ref<number>()
 const origin = ref<Projection>(), preview = ref<Preview | null>(null), error = ref(''), busy = ref(false), previewBusy = ref(false)
+const minimumHeadland = computed(() => Math.hypot(
+  Number(parameters.value.robot_length ?? 0.45) / 2 + Math.abs(Number(parameters.value.rotation_center_x ?? 0)),
+  Number(parameters.value.robot_width ?? 0.2) / 2 + Math.abs(Number(parameters.value.rotation_center_y ?? 0)),
+) + Number(parameters.value.rotation_safety_margin ?? 0.05) + 0.0001)
 const lastSaved = ref(''), fileInput = ref<HTMLInputElement | null>(null)
+const savedPath = ref<SavedPlanPath | null>(null), savedPathLoading = ref(false), savedPathError = ref('')
+let savedPathGeneration = 0
 let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
+function copyParameters(value: Readonly<Record<string, number | string | boolean>>) {
+  const result = copy(value) as Record<string, number | string | boolean>
+  if (props.kind === 'coverage' && typeof result.allow_reverse !== 'boolean') result.allow_reverse = false
+  delete result.optimization_min_coverage
+  delete result.optimization_turns
+  delete result.optimization_patterns
+  delete result.optimization_headland_min
+  delete result.optimization_headland_max
+  for (const key of ['optimization_headland_mode', 'optimization_search_angle', 'optimization_weight_coverage',
+    'optimization_weight_overlap', 'optimization_weight_length', 'optimization_weight_energy',
+    'energy_forward', 'energy_turn', 'energy_reverse', 'energy_switch',
+    'optimization_max_candidates', 'optimization_time_budget']) delete result[key]
+  if (result.path_continuity === 'CONTINUOUS') result.path_continuity = 'DUBINS_CC'
+  if (result.path_continuity === 'DISCONTINUOUS') result.path_continuity = 'DUBINS'
+  return result
+}
 const blank = (): Row => ({ longitude: '', latitude: '', dwell_time: Number(parameters.value.dwell_time ?? 2) })
 const toRows = (points: readonly GeoPoint[]): Row[] => points.map(p => ({ longitude: String(p.longitude), latitude: String(p.latitude), dwell_time: p.dwell_time ?? 2 }))
 const fingerprint = computed(() => JSON.stringify([name.value, rows.value, rings.value, parameters.value]))
 const dirty = computed(() => !id.value || fingerprint.value !== lastSaved.value)
 const editableRows = computed(() => props.kind === 'waypoint' ? rows.value : rings.value[ringIndex.value] || [])
 const active = computed(() => context.value?.active_run)
-const planReady = computed(() => !dirty.value && active.value?.mission_id === id.value
-  && active.value?.mission_revision === revision.value && active.value?.state === 'READY')
-const showLive = computed(() => !dirty.value && active.value?.mission_id === id.value && active.value?.mission_revision === revision.value)
+const planReady = computed(() => !dirty.value && showLive.value && active.value?.mission_id === id.value
+  && active.value?.mission_revision === revision.value && active.value?.stage === 'planning' && active.value?.state === 'READY')
+const planSaved = computed(() => planReady.value && active.value?.saved_plan_version === 1)
+const showLive = computed(() => !dirty.value && active.value?.mission_id === id.value && active.value?.mission_revision === revision.value
+  && (!props.planId || props.planId === active.value?.id || props.planId === active.value?.source_plan_id))
+const savedReference = computed(() => !dirty.value && !showLive.value ? savedPath.value : null)
+const displayRun = computed(() => savedReference.value?.run || (showLive.value ? active.value || null : null))
+const displayPreview = computed(() => savedReference.value?.preview || preview.value)
 const executingThis = computed(() => active.value?.mission_id === id.value && ['PLANNING', 'ACQUIRING', 'RUNNING', 'PAUSED'].includes(active.value?.state || ''))
 const controlsIdle = computed(() => safetyFresh.value && !devices.value?.safety.owner &&
   !['waypoint', 'tracking', 'planning'].some(key => {
@@ -54,7 +82,7 @@ function loadBoundary(data: Record<string, unknown> | null) {
 function reset() {
   const mission = props.mission
   name.value = mission?.name || (props.kind === 'waypoint' ? '新多点导航任务' : '新农田覆盖任务')
-  parameters.value = copy(mission?.parameters || props.defaults)
+  parameters.value = copyParameters({ ...props.defaults, ...mission?.parameters })
   rows.value = toRows(mission ? copy(mission.waypoints) : defaultTaskPoints)
   rings.value = mission
     ? loadBoundary(copy(mission.boundary) as Record<string, unknown> | null)
@@ -64,7 +92,8 @@ function reset() {
   preview.value = mission ? copy(mission.preview) : null
   error.value = ''; lastSaved.value = fingerprint.value
   clearTimeout(timer)
-  if (!mission) timer = setTimeout(() => void buildPreview(true), 650)
+  if (!mission || (props.kind === 'coverage' && !preview.value?.inset_polygons))
+    timer = setTimeout(() => void buildPreview(true), 650)
 }
 watch([() => props.mission?.id, () => props.mission?.revision, () => props.kind], reset, { immediate: true })
 function parsePoints(points: Row[]): GeoPoint[] {
@@ -123,10 +152,10 @@ async function save() {
   } catch (value) { ElMessage.error(value instanceof Error ? value.message : '保存失败') }
   finally { busy.value = false }
 }
-async function operate(action: 'plan' | 'start') {
+async function operate(action: 'plan' | 'start' | 'optimize') {
   if (!id.value || dirty.value || busy.value) return
   busy.value = true
-  try { await missionAction(id.value, action); ElMessage.success(action === 'plan' ? '正在调用 OpenNav 规划，请等待结果' : '开始请求已确认，请查看运行反馈') }
+  try { await missionAction(id.value, action); if (action !== 'start') emit('planned'); ElMessage.success(action === 'start' ? '开始请求已确认，请查看运行反馈' : '正在生成覆盖路径，请等待结果') }
   catch (value) { ElMessage.error(value instanceof Error ? value.message : '任务请求失败') }
   finally { busy.value = false; await Promise.all([refresh(), refreshWorkspace()]) }
 }
@@ -146,7 +175,7 @@ async function importFile(event: Event) {
       const data = JSON.parse(text), task = data.task || data
       if (task.mode) {
         if (task.mode !== props.kind) throw new Error('任务类型与当前栏目不符，请到对应的多点导航或全覆盖栏目导入')
-        name.value = task.name; parameters.value = { ...copy(props.defaults), ...task.parameters }
+        name.value = task.name; parameters.value = copyParameters({ ...props.defaults, ...task.parameters })
         rows.value = toRows(task.waypoints || []); rings.value = loadBoundary(task.boundary)
         origin.value = data.projection || task.projection
       } else if (props.kind === 'coverage') rings.value = loadBoundary(data)
@@ -162,7 +191,46 @@ function exportTask() {
   try { downloadJson(`${name.value || 'mission'}.json`, { schema_version: 1, task: payload(), projection: origin.value || context.value?.origin }) }
   catch (value) { ElMessage.error(value instanceof Error ? value.message : '导出失败') }
 }
-onUnmounted(() => { disposed = true; clearTimeout(timer) })
+async function fetchSavedPath() {
+  const generation = ++savedPathGeneration, mission = props.mission, plan = props.planId
+  savedPath.value = null; savedPathError.value = ''; savedPathLoading.value = false
+  if (props.kind !== 'coverage' || !mission || !plan || plan === active.value?.id || plan === active.value?.source_plan_id) return
+  savedPathLoading.value = true
+  try {
+    const result = await getSavedPlanPath(mission.id, plan)
+    if (disposed || generation !== savedPathGeneration) return
+    if (result.run.id !== plan || result.run.mission_id !== mission.id || result.run.mission_revision !== mission.revision
+      || result.frame_id !== 'map' || !result.fingerprint || result.count !== result.points.length
+      || !result.points.every(p => Number.isFinite(p.x) && Number.isFinite(p.y))
+      || (['latitude', 'longitude', 'epsg'] as const).some(k => result.projection[k] !== mission.projection[k]))
+      throw new Error('已保存路径与当前任务、版本或坐标原点不一致')
+    savedPath.value = result
+  } catch (value) {
+    if (!disposed && generation === savedPathGeneration) savedPathError.value = value instanceof Error ? value.message : '读取已保存路径失败'
+  } finally { if (generation === savedPathGeneration) savedPathLoading.value = false }
+}
+async function activateSavedPath() {
+  if (!id.value || !props.planId || !savedReference.value || dirty.value || busy.value || !controlsIdle.value || devices.value?.safety.mode !== 'coverage') return
+  busy.value = true
+  try {
+    await loadSavedPlan(id.value, props.planId)
+    ElMessage.success('路径已加载，尚未开始行驶；确认安全状态后可开始覆盖')
+  } catch (value) { ElMessage.error(value instanceof Error ? value.message : '加载路径失败') }
+  finally { busy.value = false; await Promise.all([refresh(), refreshWorkspace()]) }
+}
+async function savePath() {
+  if (props.kind !== 'coverage' || !id.value || !planReady.value || planSaved.value || busy.value) return
+  const missionId = id.value, planId = active.value!.id
+  busy.value = true
+  try {
+    await savePlannedPath(missionId, planId)
+    emit('pathSaved', missionId, planId)
+    ElMessage.success('规划路径已保存到左侧任务下，尚未开始行驶')
+  } catch (value) { ElMessage.error(value instanceof Error ? value.message : '保存规划路径失败') }
+  finally { busy.value = false; await refreshWorkspace() }
+}
+watch([() => props.planId, () => props.mission?.id, () => props.mission?.revision], () => void fetchSavedPath(), { immediate: true })
+onUnmounted(() => { disposed = true; ++savedPathGeneration; clearTimeout(timer) })
 </script>
 
 <template>
@@ -193,7 +261,8 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
         <el-divider content-position="left">{{ kind === 'coverage' ? '规划与路径跟踪参数' : '多点导航参数' }}</el-divider>
         <div class="parameter-grid">
           <el-form-item v-for="field in parameterFields[kind]" :key="field.key" :label="`${field.label}${field.unit ? '（' + field.unit + '）' : ''}`">
-            <el-select v-if="field.choices" v-model="parameters[field.key]"><el-option v-for="(label, value) in field.choices" :key="value" :label="label" :value="value" /></el-select>
+            <el-checkbox v-if="field.toggle" v-model="parameters[field.key]">允许倒车作业</el-checkbox>
+            <el-select v-else-if="field.choices" v-model="parameters[field.key]"><el-option v-for="(label, value) in field.choices" :key="value" :label="label" :value="value" /></el-select>
             <el-input-number v-else :model-value="numberValue(field)" :min="field.min" :max="field.max" :step="field.step || 0.1" :precision="3" controls-position="right" @update:model-value="setNumber(field, $event)" />
             <small v-if="field.hint">{{ field.hint }}</small>
           </el-form-item>
@@ -203,14 +272,56 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
           <el-button :loading="previewBusy" @click="buildPreview()">{{ kind === 'waypoint' ? '检查目标点' : '检查地块边界' }}</el-button>
           <el-button type="primary" :loading="busy" @click="save">保存任务</el-button>
           <el-button v-if="kind === 'coverage'" type="success" plain :disabled="dirty || busy || !controlsIdle || devices?.safety.mode !== 'coverage'" @click="operate('plan')">生成覆盖路径</el-button>
+          <el-button v-if="kind === 'coverage'" type="primary" plain :loading="busy" :disabled="!planReady || planSaved || busy" @click="savePath">{{ planSaved ? '规划路径已保存' : '保存规划路径' }}</el-button>
           <el-button type="success" :disabled="dirty || busy || !controlsIdle || devices?.safety.mode !== kind || devices?.safety.motion_inhibited !== false || devices?.safety.localization_valid !== true || (kind === 'coverage' && !planReady)" @click="operate('start')">{{ kind === 'coverage' ? '前往起点并开始覆盖' : '开始多点导航' }}</el-button>
         </div>
-        <p v-if="kind === 'coverage'" class="hint">先保存、选择全覆盖模式并生成路径。点击开始后，车辆较远时会先单点导航到覆盖起点，再自动跟踪覆盖路径；已在起点附近则直接跟踪。接近起点采用直达导航，请先确认接近通道可通行。</p>
+        <p v-if="kind === 'coverage'" class="hint">先保存任务、选择全覆盖模式并生成路径。要留作以后复用，请点击“保存规划路径”，左侧会显示该路径；以后选择并加载后再明确开始。当前刚生成的就绪路径也可直接开始。接近起点采用直达导航，请先确认接近通道可通行。</p>
         <p v-else class="hint">先保存，再选择多点导航模式，定位与安全状态有效后明确开始任务。</p>
       </el-form>
     </el-card>
+    <el-card v-if="kind === 'coverage' && planId" shadow="never" class="saved-path-card">
+      <template #header><strong>已保存覆盖路径</strong></template>
+      <p v-if="savedPathLoading" class="hint">正在读取完整路径…</p>
+      <p v-if="dirty" class="hint">任务有未保存修改；保存并重新规划后才能使用新版本路径。</p>
+      <el-alert v-if="savedPathError" :title="savedPathError" type="warning" :closable="false" />
+      <template v-if="savedReference">
+        <p class="hint">{{ new Date(savedReference.run.created_at).toLocaleString('zh-CN') }} · {{ savedReference.count }}个路径点。当前为已保存路径预览，加载后才能开始覆盖。</p>
+        <el-button type="primary" :loading="busy" :disabled="dirty || !controlsIdle || active?.state === 'PLANNING' || devices?.safety.mode !== 'coverage'" @click="activateSavedPath">加载此路径</el-button>
+        <p class="hint">加载不启动车辆；再次执行从该路径起点开始，并保存到新的运行记录。</p>
+      </template>
+      <p v-else-if="showLive" class="hint">此路径已加载到当前核心，按上方任务与安全状态操作。</p>
+      <el-button v-if="savedPathError" plain size="small" @click="fetchSavedPath">重试读取</el-button>
+    </el-card>
+    <el-card v-if="kind === 'coverage'" shadow="never" class="smart-card">
+      <template #header><strong>智能规划策略</strong></template>
+      <p>固定原地转向：停车等待 → 原地对齐 → 前进行驶；以往复式作业为基础，必要时局部优化行访问顺序。</p>
+      <p>机具有效作业宽度 {{ Number(parameters.operation_width ?? 0.8).toFixed(3) }} m，由上方参数人工设置，规划与评价共用。</p>
+      <p>最小安全地头 <strong>{{ minimumHeadland.toFixed(3) }} m</strong>，由车辆长宽、旋转中心和安全余量计算，不搜索人工地头宽度。</p>
+      <p>自动搜索 0～180° 作业方向，先粗搜再细化；固定权重：覆盖率最大化 0.5、重复覆盖最小化 0.3、总长度最小化 0.2。</p>
+      <p class="hint">总长度包含作业行和换行连接。车辆尺寸须包含旋转时的实际外伸，默认车长及余量为初值。完整执行预定角度与行顺序比较，顶部显示进度，可人工取消；不保证全局最优。</p>
+      <div class="editor-toolbar">
+        <el-button type="primary" plain :loading="busy" :disabled="!dirty" @click="save">保存任务</el-button>
+        <el-button type="success" :loading="busy" :disabled="dirty || !controlsIdle || devices?.safety.mode !== 'coverage'" @click="operate('optimize')">一键优化规划</el-button>
+      </div>
+      <p class="hint">上方条带顺序、指定角度、地头预留、最小转弯半径和曲线形式仍供手工“生成覆盖路径”使用；本策略固定原地转向和安全地头。规划不会自动开始行驶。</p>
+    </el-card>
+    <CoverageQuality v-if="kind === 'coverage'" :run="displayRun">
+      <template #parameters>
+        <el-form label-position="top" :disabled="busy || executingThis" class="quality-parameters">
+          <div class="parameter-grid">
+            <el-form-item v-for="field in coverageQualityFields" :key="field.key" :label="`${field.label}（${field.unit}）`">
+              <el-input-number :model-value="numberValue(field)" :min="field.min" :max="field.max" :step="field.step" :precision="3" controls-position="right" @update:model-value="setNumber(field, $event)" />
+              <small>{{ field.hint }}</small>
+            </el-form-item>
+          </div>
+          <p class="hint">评价参数与当前任务一并保存；修改后请保存任务并重新生成覆盖路径，结果才会采用新参数。</p>
+          <el-button type="primary" plain :disabled="!dirty" :loading="busy" @click="save">保存任务（含评价参数）</el-button>
+        </el-form>
+      </template>
+    </CoverageQuality>
     <div v-if="preview" class="preview-summary">{{ kind === 'coverage' ? `地块面积 ${(preview.area || 0).toFixed(2)} m² · 周界 ${preview.length.toFixed(2)} m` : `目标点 ${preview.points.length} 个 · 相邻点连线长 ${preview.length.toFixed(2)} m` }} · map 米制坐标</div>
-    <FieldMap :preview="preview" :show-live-path="showLive" />
+    <FieldMap :preview="displayPreview" :show-live-path="showLive" :saved-reference="savedReference" :coverage-mode="kind === 'coverage'"
+      :coverage-run="kind === 'coverage' ? displayRun : null" />
   </div>
 </template>
 
@@ -218,6 +329,9 @@ onUnmounted(() => { disposed = true; clearTimeout(timer) })
 .mission-editor { min-width: 0; }.editor-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
 .editor-toolbar, .ring-select { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0; }.editor-toolbar .el-button, .ring-select .el-button { margin: 0; }.ring-select .el-select { width: 190px; }
 .parameter-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 18px; }.parameter-grid .el-input-number { width: 100%; }.parameter-grid small { display: block; color: #829087; line-height: 1.5; padding-top: 5px; }
+.quality-parameters { padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid #e6ece8; }.quality-parameters .parameter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.smart-card { margin-top: 20px; } summary { cursor: pointer; color: #376e4b; padding: 8px 0; }
+.saved-path-card { margin-top: 20px; }
 .hint { color: #7c8a81; font-size: 12px; line-height: 1.8; }.actions { margin-top: 20px; }.preview-summary { margin: 18px 0 10px; padding: 14px; background: #eaf3ec; color: #376e4b; border-radius: 8px; font-size: 13px; }
-@media (max-width: 1100px) { .parameter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }@media (max-width: 620px) { .parameter-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .parameter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }@media (max-width: 620px) { .parameter-grid, .quality-parameters .parameter-grid { grid-template-columns: 1fr; } }
 </style>
