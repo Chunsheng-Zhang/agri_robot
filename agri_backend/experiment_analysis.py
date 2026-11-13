@@ -176,6 +176,15 @@ def analyze_run(directory):
         'telemetry_counts': dict(Counter(r['topic'] for r in mgx)),
         'missing_topics': missing, 'capture': capture, 'communication':communication,
         'tracking_assessment':assessment, 'notes': notes}
+    if run.get('coverage_quality_version') == 1 and run['mode'] == 'coverage':
+        try:
+            from .coverage_quality import completed_quality
+            quality = completed_quality(directory, metrics)
+            metrics['coverage_quality'] = {k:quality[k] for k in ('planned','actual')}
+            atomic_json(output/'coverage_quality_status.json',{'state':'SUCCEEDED','updated_at':now()})
+        except Exception as exc:
+            notes.append(f'覆盖作业质量评价失败，不能作为零漏作/零重叠结论：{exc}')
+            atomic_json(output/'coverage_quality_status.json',{'state':'FAILED','reason':str(exc),'updated_at':now()})
     atomic_json(output / 'metrics.json', metrics)
     atomic_json(output / 'communication.json', communication)
     atomic_json(output / 'communication_plot_data.json', plot_data)
@@ -194,6 +203,9 @@ def analyze_run(directory):
         plot_report(output, mission, {**run, 'state': metrics['task_state']}, reference, phase_rows, motion, mgx, t0, primary)
         plot_communication(output,plot_data,communication,run['id'])
     write_summary(directory,mission,metrics)
+    if (output/'coverage_quality_report.md').exists():
+        with (output/'report.md').open('a',encoding='utf-8') as stream:
+            stream.write('\n## 全覆盖作业质量\n\n[规划与实际轨迹覆盖、漏作及重复作业评价](coverage_quality_report.md)\n')
     lines = ['# Task analysis', '', '[本轮实验结果汇总与跟踪精度评价](report.md)', '', f'Run: `{run["id"]}`', f'State: `{metrics["task_state"]}`', '',
              '![Trajectory, speed, lateral and heading error](trajectory_and_speed.png)', '',
              '![Observed message missing ratios](communication_loss.png)', '',
@@ -202,6 +214,9 @@ def analyze_run(directory):
              'Detailed per-phase statistics: `metrics.json` and `metrics.csv`.',
              'Raw capture integrity: `../telemetry/recording.json`.', '']
     (output / 'README.md').write_text('\n'.join(lines), encoding='utf-8')
+    if (output/'coverage_quality_report.md').exists():
+        with (output/'README.md').open('a',encoding='utf-8') as stream:
+            stream.write('\n[全覆盖作业质量评价报告](coverage_quality_report.md)\n')
     atomic_json(output / 'status.json', {'state': 'SUCCEEDED', 'updated_at': now(),
         'missing_topics': missing, 'task_state': metrics['task_state']})
     return metrics
