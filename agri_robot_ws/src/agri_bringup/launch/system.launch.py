@@ -95,7 +95,7 @@ def nodes(context):
         extra_env = {}
         if value('rosmaster_pythonpath'):
             extra_env['PYTHONPATH'] = value('rosmaster_pythonpath') + os.pathsep + os.environ.get('PYTHONPATH', '')
-        result.append(Node(package='yahboomcar_bringup', executable='Mcnamu_driver_X3',
+        result.append(Node(package='agri_base', executable='yahboom_driver_monitor',
                            name='yahboom_driver',
                            additional_env=extra_env,
                            remappings=[('cmd_vel', '/base/driver_cmd_vel')], output='screen'))

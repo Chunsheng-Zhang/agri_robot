@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { Bell, User, ArrowDown } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import EmergencyControls from './EmergencyControls.vue'
+import RuntimeDiagnostics from './RuntimeDiagnostics.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,6 +28,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
       <span class="breadcrumb-current">{{ pageTitle }}</span>
     </div>
 
+    <RuntimeDiagnostics />
     <EmergencyControls />
 
     <!-- 右侧：系统时间与用户信息 -->
@@ -124,7 +126,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   justify-content: flex-end;
   gap: 10px;
 
-  margin: 0 16px 0 auto;
+  margin: 0 16px 0 12px;
 
   flex-shrink: 0;
   white-space: nowrap;
@@ -223,7 +225,7 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   }
 
   .emergency-controls {
-    margin: 0 12px 0 auto;
+    margin: 0 12px 0 8px;
     gap: 6px;
   }
 }
@@ -240,8 +242,14 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 
 @media (max-width: 760px) {
   .topbar {
-    padding: 0 10px;
+    padding: 8px 10px;
+    height: auto;
+    min-height: 66px;
+    box-sizing: border-box;
+    gap: 6px;
   }
+
+  .breadcrumb, .topbar-right { display: none; }
 
   .breadcrumb {
     gap: 6px;
@@ -249,8 +257,10 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
   }
 
   .emergency-controls {
-    margin: 0 6px 0 auto;
+    margin: 0 0 0 5px;
     gap: 5px;
+    flex: 1;
+    min-width: 0;
   }
 
   .emergency-button,

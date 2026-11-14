@@ -26,7 +26,12 @@ def test_vendor_launch_selection_without_starting_devices(tmp_path, monkeypatch)
     packages = [node.node_package if isinstance(node.node_package, str)
                 else perform_substitutions(context, node.node_package)
                 for node in actions if isinstance(node, Node)]
-    assert packages.count('yahboomcar_bringup') == 1
+    executables = [node.node_executable if isinstance(node.node_executable, str)
+                   else perform_substitutions(context, node.node_executable)
+                   for node in actions if isinstance(node, Node)]
+    assert executables.count('yahboom_driver_monitor') == 1
+    assert 'Mcnamu_driver_X3' not in executables
+    assert packages.count('yahboomcar_bringup') == 0
     assert packages.count('joy') == 1
     assert 'ydlidar_ros2_driver' in packages and 'web_video_server' in packages
     assert 'yahboomcar_base_node' not in packages

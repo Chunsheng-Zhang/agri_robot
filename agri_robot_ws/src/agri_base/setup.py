@@ -16,6 +16,7 @@ setup(
     entry_points={'console_scripts': [
         'localization = agri_base.localization:main',
         'chassis_adapter = agri_base.chassis_adapter:main',
+        'yahboom_driver_monitor = agri_base.serial_observer:main',
         'joy_adapter = agri_base.joy_adapter:main',
         'camera_status = agri_base.device_status:camera_main',
         'sensor_frames = agri_base.device_status:frames_main',

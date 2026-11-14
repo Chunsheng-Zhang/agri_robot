@@ -93,6 +93,8 @@ class Workspace:
         return safety
 
     def event(self, kind, **details):
+        from .diagnostics import runtime_diagnostics
+        runtime_diagnostics.log('INFO', 'web_task', kind + ' ' + json.dumps(details, ensure_ascii=False), channel='web_event')
         path = self.store.root / 'data/web/events.jsonl'
         path.parent.mkdir(parents=True, exist_ok=True)
         value = {'time': now(), 'event': kind, 'channel': 'web', **details}

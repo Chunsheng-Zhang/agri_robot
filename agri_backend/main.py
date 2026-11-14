@@ -292,6 +292,8 @@ if ROS_AVAILABLE:
                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
 
             install_ros_devices(self)
+            from agri_backend.diagnostics import install_ros as install_diagnostic_ros
+            install_diagnostic_ros(self)
             try:
                 from .ros_workspace import RosWorkspace
             except ImportError:
@@ -587,12 +589,16 @@ async def lifespan(app: FastAPI):
         停止 ROS 2 桥接并释放资源。
     """
 
+    from agri_backend.diagnostics import runtime_diagnostics
+    runtime_diagnostics.start()
     bridge = RosBridge()
 
     # 保存桥接对象，供各个 API 接口使用。
     app.state.ros_bridge = bridge
 
     bridge.start()
+    runtime_diagnostics.log('INFO' if bridge.started else 'ERROR', 'backend',
+        'ROS状态桥接已启动' if bridge.started else f'ROS桥接未启动：{bridge.error}', channel='startup')
 
     if bridge.started:
         print("[ROS 2] 实时状态桥接已启动")
@@ -608,6 +614,7 @@ async def lifespan(app: FastAPI):
         bridge.stop()
         app.state.workspace.quality_jobs.close()
         app.state.workspace.coverage_maps.close()
+        runtime_diagnostics.close()
         print("[ROS 2] 桥接已关闭")
 
 
@@ -627,7 +634,17 @@ app = FastAPI(
 async def invalid_request(request, exc):
     # Do not echo NaN/Inf inputs into a JSON error response or hide useful field errors.
     messages = ['.'.join(map(str, item['loc'][1:])) + ': ' + item['msg'] for item in exc.errors()[:5]]
+    from agri_backend.diagnostics import runtime_diagnostics
+    runtime_diagnostics.log('WARN', 'http', '参数校验失败：' + '；'.join(messages), channel='api_error')
     return JSONResponse(status_code=422, content={'detail': '参数校验失败：' + '；'.join(messages)})
+
+
+@app.exception_handler(HTTPException)
+async def diagnostic_http_exception(request, exc):
+    from agri_backend.diagnostics import runtime_diagnostics
+    runtime_diagnostics.log('ERROR' if exc.status_code >= 500 else 'WARN', 'http',
+        f'{request.method} {request.url.path}: {exc.detail}', channel='api_error')
+    return JSONResponse(status_code=exc.status_code, content={'detail': exc.detail}, headers=exc.headers)
 
 
 # ============================================================
@@ -1067,3 +1084,21 @@ def current_experiment_capture():
 
 
 app.add_middleware(CommunicationMiddleware, session_getter=current_experiment_capture)
+
+# Read-only diagnostic endpoints never open a serial port or acquire control.
+from agri_backend.diagnostics import install_routes as install_diagnostic_routes
+install_diagnostic_routes(app)
+
+
+@app.middleware('http')
+async def diagnostic_http_errors(request, call_next):
+    from agri_backend.diagnostics import runtime_diagnostics
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        runtime_diagnostics.log('ERROR', 'http', f'{request.method} {request.url.path}: {type(exc).__name__}: {exc}', channel='api_error')
+        raise
+    if response.status_code >= 400 and not request.url.path.startswith('/api/diagnostics/'):
+        runtime_diagnostics.log('ERROR' if response.status_code >= 500 else 'WARN', 'http',
+            f'{request.method} {request.url.path}: HTTP {response.status_code}', channel='api_error')
+    return response

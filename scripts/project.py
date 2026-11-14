@@ -15,7 +15,7 @@ from time import monotonic, sleep
 from urllib.request import ProxyHandler, Request, build_opener
 
 ROOT = Path(__file__).resolve().parents[1]
-HARDWARE = {'Mcnamu_driver_X3', 'joy_node', 'ydlidar_ros2_driver_node',
+HARDWARE = {'Mcnamu_driver_X3', 'yahboom_driver_monitor', 'joy_node', 'ydlidar_ros2_driver_node',
             'astra_camera_node', 'web_video_server', 'localization', 'safety',
             'chassis_adapter', 'joy_adapter', 'waypoint', 'path_tracker', 'coverage_adapter',
             'coverage_server'}
