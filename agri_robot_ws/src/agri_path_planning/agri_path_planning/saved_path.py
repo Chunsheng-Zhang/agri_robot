@@ -9,7 +9,7 @@ MAX_FILE_BYTES=32*1024*1024
 MAX_POINTS=150000
 
 
-def read_saved_path(filename, frame, polygon, robot_width, allow_reverse=False, expected_envelope=None):
+def read_saved_path(filename, frame, polygon, robot_width, allow_reverse=False, expected_envelope=None, expected_entry=None):
     path=Path(filename)
     if path.stat().st_size>MAX_FILE_BYTES:
         raise ValueError('已保存路径超过读取预算，请重新规划')
@@ -48,6 +48,13 @@ def read_saved_path(filename, frame, polygon, robot_width, allow_reverse=False, 
         validate_point_turn_path(points,polygon,envelope)
         if data.get('motion_signature')!=motion_signature(points):
             raise ValueError('原地转向标记或航向指纹不一致')
+    from .entry import validate_entry_metadata
+    parameters={'robot_width':robot_width}
+    if expected_envelope:
+        parameters.update(robot_length=expected_envelope['robot_length_m'],
+            rotation_safety_margin=expected_envelope['safety_margin_m'],
+            rotation_center_x=expected_envelope.get('center_x_m',0.),rotation_center_y=expected_envelope.get('center_y_m',0.))
+    validate_entry_metadata(planning.get('entry'),polygon,parameters,expected_entry,points[0])
     _,directions=directed_poses(points)
     if any(d<0 for d in directions) and not allow_reverse:
         raise ValueError('已保存路径的姿态包含倒车段，尚未允许倒车')

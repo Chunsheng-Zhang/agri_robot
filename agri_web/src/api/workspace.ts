@@ -6,13 +6,20 @@ export type WorkMode = typeof workModes[number]
 export type MissionMode = 'waypoint' | 'coverage'
 export interface GeoPoint { longitude: number; latitude: number; dwell_time: number }
 export interface Projection { epsg: number; latitude: number; longitude: number }
+export interface FieldEntry { longitude:number; latitude:number; source:'coordinates'|'map' }
+export interface EntryPlan {
+  reference: FieldEntry & PathPoint; anchor:PathPoint; coverage_start:PathPoint; connection:readonly PathPoint[]
+  distance_m:number; connection_length_m:number; reference_to_anchor_m:number; access_verified:boolean; note:string
+}
 export interface Preview {
   frame_id: string; points: PathPoint[]; rings: PathPoint[][]; area: number | null; length: number
   inset_polygons?: PathPoint[][][]; inset_distance_m?: number
+  entry?: (FieldEntry & PathPoint) | null; entry_anchor?: PathPoint | null
 }
 export interface MissionInput {
   name: string; mode: MissionMode; waypoints: GeoPoint[]; boundary: object | null
   parameters: Record<string, number | string | boolean>; revision?: number; import_origin?: Projection
+  entry?: FieldEntry | null
 }
 export interface MissionDocument extends MissionInput {
   id: string; revision: number; projection: Projection; preview: Preview; created_at: string; updated_at: string
@@ -37,12 +44,14 @@ export interface Run {
   saved_plan_version?: number
   plan_save_required?: boolean
   plan_saved_at?: string
+  entry?: EntryPlan | null
   optimization?: OptimizationResult | null
 }
 export interface OptimizationCandidate {
   id: number; mode: string; headland_width_m: number; angle_rad: number; variant: number; state: string
   coverage_percent?: number; overlap_percent?: number; fine_coverage_percent?: number; fine_overlap_percent?: number
   length_m?: number; energy_proxy?: number; score?: number; reason?: string; executable?: boolean
+  working_length_m?: number; entry_length_m?: number
   motion?: {forward_m:number;reverse_m:number;turning_m:number;switches:number;energy_proxy:number}
   headland_search_phase?: 'COARSE' | 'REFINE'
   order?: string; swath_count?: number; point_turn_count?: number
@@ -118,6 +127,9 @@ export const request = <T>(path: string, data?: unknown, method = 'POST') => api
 })
 export const getWorkspace = () => apiRequest<WorkspaceContext>('/api/workspace')
 export const selectMode = (mode: WorkMode) => request('/api/system/mode', { mode })
+export const mapToWgs84 = (x:number,y:number,projection:Projection) =>
+  apiRequest<Pick<FieldEntry,'latitude'|'longitude'> & PathPoint & {projection:Projection}>('/api/coordinates/map-to-wgs84',{
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({x,y,projection})})
 export const saveMission = (mission: MissionInput, id?: string) => request<MissionDocument>(
   id ? `/api/missions/${id}` : '/api/missions', mission, id ? 'PUT' : 'POST')
 export const deleteMission = (id: string) => request(`/api/missions/${id}`, undefined, 'DELETE')

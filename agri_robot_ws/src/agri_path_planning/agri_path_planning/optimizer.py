@@ -7,6 +7,7 @@ from shapely import wkb
 from . import contour
 from .coverage_geometry import AreaGrid
 from .planning_options import WEIGHTS
+from .entry import EntryConnector
 from .point_turn_planner import StraightRouter, working_rows, improve_rows, compose, field_cell
 from agri_base.path_geometry import rotation_envelope, validate_point_turn_path
 
@@ -54,40 +55,45 @@ def optimize(field_wkb, parameters, progress=None):
     grid=AreaGrid(field,headland,resolution) if not safe.is_empty else None
     if grid is not None:
         router=StraightRouter(safe,check);reference_length=field.area/width
+        entry=EntryConnector(field,p,p['entry'],check) if p.get('entry') else None
         def evaluate(angle,phase,completed,total):
             nonlocal chosen,feasible_count
             angle=angle%math.pi;key=round(angle,8)
             if key in seen:return
-            seen.add(key);working=None
-            for order in ['BOUSTROPHEDON','LOCAL_2OPT']:
-                emit(phase,completed,total,angle_rad=angle,order=order)
-                row={'id':len(rows)+1,'mode':'BOUSTROPHEDON','headland_width_m':headland,
-                     'angle_rad':angle,'variant':0,'order':order,'state':'REJECTED',
-                     'headland_search_phase':phase,'executable':False}
-                try:
-                    check()
-                    if working is None:working=working_rows(safe,width,angle)
-                    if order=='LOCAL_2OPT':
-                        working,changes=improve_rows(working,router,check)
-                        if not changes:return
-                    points,vertices,details=compose(working,router,spacing,check)
-                    validate_point_turn_path(points,field,envelope)
-                    counts,_=grid.visits([vertices],width,check=check)
-                    metrics=grid.metrics(counts)['field']
-                    length=sum(math.dist(a,b) for a,b in zip(vertices,vertices[1:]))
-                    value=score(metrics['coverage_percent'],metrics['overlap_percent'],length,reference_length)
-                    row.update(state='EVALUATED',executable=True,score=value,length_m=length,
-                        coverage_percent=metrics['coverage_percent'],overlap_percent=metrics['overlap_percent'],
-                        fine_coverage_percent=metrics['coverage_percent'],fine_overlap_percent=metrics['overlap_percent'],
-                        **details)
-                    feasible_count+=1
-                    # Keep metrics for every candidate, but only the best geometry.
-                    # Memory usage must not truncate the remaining angle search.
-                    if chosen is None or rank(row)<rank(chosen[0]):chosen=(row,points,details)
-                except ValueError as exc:
-                    check();row['reason']=str(exc)
-                rows.append(row)
-                if working is None:return
+            seen.add(key)
+            for variant in (range(4) if entry else (0,)):
+                working=None
+                for order in ['BOUSTROPHEDON','LOCAL_2OPT']:
+                    emit(phase,completed,total,angle_rad=angle,order=order,variant=variant)
+                    row={'id':len(rows)+1,'mode':'BOUSTROPHEDON','headland_width_m':headland,
+                         'angle_rad':angle,'variant':variant,'order':order,'state':'REJECTED',
+                         'headland_search_phase':phase,'executable':False}
+                    try:
+                        check()
+                        if working is None:working=working_rows(safe,width,angle,variant)
+                        if order=='LOCAL_2OPT':
+                            working,changes=improve_rows(working,router,check,entry.anchor if entry else None)
+                            if not changes:continue
+                        points,vertices,details=compose(working,router,spacing,check)
+                        validate_point_turn_path(points,field,envelope)
+                        connection=entry.assess(points[0]) if entry else None
+                        counts,_=grid.visits([vertices],width,check=check)
+                        metrics=grid.metrics(counts)['field']
+                        working_length=sum(math.dist(a,b) for a,b in zip(vertices,vertices[1:]))
+                        entry_length=connection['distance_m'] if connection else 0.
+                        length=working_length+entry_length
+                        value=score(metrics['coverage_percent'],metrics['overlap_percent'],length,reference_length)
+                        row.update(state='EVALUATED',executable=True,score=value,length_m=length,
+                            working_length_m=working_length,entry_length_m=entry_length,
+                            coverage_percent=metrics['coverage_percent'],overlap_percent=metrics['overlap_percent'],
+                            fine_coverage_percent=metrics['coverage_percent'],fine_overlap_percent=metrics['overlap_percent'],
+                            **details)
+                        feasible_count+=1
+                        if chosen is None or rank(row)<rank(chosen[0]):chosen=(row,points,{**details,'entry':connection})
+                    except ValueError as exc:
+                        check();row['reason']=str(exc)
+                    rows.append(row)
+                    if working is None:break
         axis=pca_angle(field)
         initial=[];initial_seen=set()
         for angle in [axis,(axis+math.pi/2)%math.pi]+[math.radians(i) for i in range(0,180,15)]:
@@ -124,14 +130,15 @@ def optimize(field_wkb, parameters, progress=None):
         'configuration':{},'elapsed_seconds':monotonic()-start,
         'limitations':['车体按长宽及旋转中心的完整圆包络检查；尺寸须实测，默认值未实车标定。',
             '所有行驶段均按机具开启估计；尚无实际机具开关数据。',
-            '接近起点不在总路径长度和覆盖评分中，仍须独立确认可通行。',
+            ('入口连接计入总长度，覆盖率不计接近段；田外入口到安全区域仅计距离示意，不自动执行。' if p.get('entry') else
+             '未设置入口，接近起点不在总路径长度和覆盖评分中，仍须独立确认可通行。'),
             '总长度包含作业行及全部换行连接；原地旋转平移长度为零，不评价旋转时间或能源。'],
         'implementation_sha256':{name:hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
             for name in ('optimizer.py','point_turn_planner.py','planning_options.py','coverage_geometry.py')}}
     emit('COMPLETE' if chosen else 'FAILED')
     if not chosen:return {'points':[],'metadata':{'strategy':'SMART'},'optimization':report}
     row,points,details=chosen;report['selected']=row
-    metadata={'mode':'BOUSTROPHEDON','strategy':'SMART','turn_mode':'POINT_TURN','policy_version':2,
+    metadata={'entry':details.get('entry'),'mode':'BOUSTROPHEDON','strategy':'SMART','turn_mode':'POINT_TURN','policy_version':2,
         'rotation_envelope':envelope,'headland_search':search,'path_details':details,'selected_candidate_id':row['id'],
         'effective_parameters':{'headland_width':headland,'swath_angle':row['angle_rad'],
             'operation_width':width,'evaluation_width':width,'robot_width':p['robot_width'],

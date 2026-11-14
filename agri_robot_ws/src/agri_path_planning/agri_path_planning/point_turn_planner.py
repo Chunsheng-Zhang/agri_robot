@@ -72,7 +72,7 @@ class StraightRouter:
         return sum(math.dist(u,v) for u,v in zip(p,p[1:]))
 
 
-def working_rows(field, width, angle):
+def working_rows(field, width, angle, variant=0):
     import fields2cover as f
     swaths=f.Swaths()
     for cell in pieces(field):
@@ -80,12 +80,12 @@ def working_rows(field, width, angle):
         for i in range(part.size()):swaths.push_back(part[i])
     if not swaths.size():raise ValueError('安全地头内缩后没有可用作业行')
     if swaths.size()>1500:raise ValueError('作业行数量超过1500条预算')
-    ordered=f.RP_Boustrophedon().genSortedSwaths(swaths,0)
+    ordered=f.RP_Boustrophedon().genSortedSwaths(swaths,variant)
     return [((s.startPoint().getX(),s.startPoint().getY()),
              (s.endPoint().getX(),s.endPoint().getY())) for s in ordered]
 
 
-def improve_rows(rows, router, check):
+def improve_rows(rows, router, check, entry=None):
     """Bounded 2-opt over nearby rows; every working row is still visited once."""
     best=list(rows);changes=0
     for _ in range(2):
@@ -94,6 +94,9 @@ def improve_rows(rows, router, check):
             check()
             for j in range(i+1,min(len(best),i+5)):
                 old=new=0.
+                if not i and entry is not None:
+                    old+=router.distance(entry,best[i][0])
+                    new+=router.distance(entry,best[j][1])
                 if i:
                     old+=router.distance(best[i-1][1],best[i][0])
                     new+=router.distance(best[i-1][1],best[j][1])

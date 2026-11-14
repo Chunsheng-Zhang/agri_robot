@@ -37,7 +37,7 @@ def read_plan(store, mission, identity, *, allow_pending_save=False):
     if source.get('id')!=mission['id'] or source.get('revision')!=run.get('mission_revision') or source.get('mode')!='coverage':
         raise ValueError('路径记录与原任务快照不一致')
     if source.get('projection')!=run.get('projection'):raise ValueError('原任务快照的固定原点不一致')
-    if any(source.get(k)!=mission.get(k) for k in ('projection','boundary')) or (
+    if any(source.get(k)!=mission.get(k) for k in ('projection','boundary','entry')) or (
             CoverageParameters(**source['parameters']).model_dump()!=CoverageParameters(**mission['parameters']).model_dump()):
         raise ValueError('任务配置与已保存路径的快照不一致，请重新规划')
     if run.get('projection')!=mission['projection']:raise ValueError('路径记录的固定原点不一致')
@@ -50,8 +50,9 @@ def read_plan(store, mission, identity, *, allow_pending_save=False):
     p=mission['parameters']
     envelope=rotation_envelope(p.get('robot_length',.45),width,p.get('rotation_safety_margin',.05),
         p.get('rotation_center_x',0.),p.get('rotation_center_y',0.))
+    from agri_path_planning.entry import parse_entry
     data,points=read_saved_path(plan_file(directory),frame,field,width,bool(p.get('allow_reverse',False)),
-        expected_envelope=envelope)
+        expected_envelope=envelope,expected_entry=parse_entry(mission.get('entry'),frame))
     fingerprint=signature(points)
     if run.get('reference_fingerprint') and fingerprint!=run['reference_fingerprint']:
         raise ValueError('已保存路径指纹与记录不一致，禁止加载')

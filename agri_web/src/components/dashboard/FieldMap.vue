@@ -3,14 +3,19 @@ import { computed, onMounted, onUnmounted, reactive, ref, useId, watch } from 'v
 import { MapLocation, Refresh } from '@element-plus/icons-vue'
 import { getReferencePath, getTrackedPath, getWaypoints } from '../../api/robot'
 import type { PathPoint, ReferencePathResponse } from '../../api/robot'
-import type { CoverageMapSource, Preview, Run } from '../../api/workspace'
+import type { CoverageMapSource, Preview, Run, EntryPlan } from '../../api/workspace'
 import { useRealtime } from '../../composables/useRealtime'
 import { useCoverageLayers } from '../../composables/useCoverageLayers'
 
 const { robot, devices, safetyFresh, poseFresh } = useRealtime()
 const props = withDefaults(defineProps<{ preview?: Preview | null; showLivePath?: boolean;
   pathSource?: 'tracking' | 'following' | 'waypoint';
+  entryPoint?:PathPoint|null; entryPicking?:boolean; entryEditable?:boolean; entryPlan?:EntryPlan|null;
   coverageMode?: boolean; coverageRun?: Run | null; savedReference?: ReferencePathResponse | null }>(), { showLivePath: true, coverageMode: false, pathSource: 'tracking' })
+const emit=defineEmits<{entrySelected:[point:PathPoint]}>()
+const entryDrag=ref<PathPoint|null>(null)
+let selectingEntry=false
+let frozenProjection:((p:PathPoint)=>PathPoint)|null=null
 const source = ref<CoverageMapSource>('actual')
 const layers = reactive({ inset: true, completed: true, reference: true, remaining: true, overlap: true, forbidden: true })
 const coverage = useCoverageLayers(() => props.coverageMode && (props.showLivePath || props.savedReference) ? props.coverageRun : null, () => source.value)
@@ -37,15 +42,38 @@ function scale(factor: number) { zoom.value = Math.max(1, Math.min(8, zoom.value
 function pointerDown(event: PointerEvent) {
   const element = event.currentTarget as SVGSVGElement
   element.setPointerCapture(event.pointerId)
+  if(props.entryPicking || props.entryEditable && (event.target as Element)?.closest?.('[data-entry-marker]')){
+    selectingEntry=true;frozenProjection=transform.value
+    entryDrag.value=mapPoint(event);return
+  }
   drag = { x: event.clientX, y: event.clientY, px: panX.value, py: panY.value }
 }
 function pointerMove(event: PointerEvent) {
+  if(selectingEntry){entryDrag.value=mapPoint(event);return}
   if (!drag) return
   const matrix = (event.currentTarget as SVGSVGElement).getScreenCTM()
   if (!matrix?.a || !matrix.d) return
   panX.value = drag.px - (event.clientX - drag.x) / matrix.a
   panY.value = drag.py - (event.clientY - drag.y) / matrix.d
 }
+function mapPoint(event:PointerEvent):PathPoint|null{
+  const project=frozenProjection||transform.value,matrix=(event.currentTarget as SVGSVGElement).getScreenCTM()
+  if(!project||!matrix)return null
+  const det=matrix.a*matrix.d-matrix.b*matrix.c
+  if(!det)return null
+  const dx=event.clientX-matrix.e,dy=event.clientY-matrix.f
+  const sx=(dx*matrix.d-dy*matrix.c)/det,sy=(dy*matrix.a-dx*matrix.b)/det
+  const zero=project({x:0,y:0}),one=project({x:1,y:1})
+  return {x:(sx-zero.x)/(one.x-zero.x),y:(sy-zero.y)/(one.y-zero.y)}
+}
+function pointerUp(event:PointerEvent){
+  if(selectingEntry&&(props.entryPicking||props.entryEditable)){
+    const point=mapPoint(event)
+    if(point&&Number.isFinite(point.x)&&Number.isFinite(point.y))emit('entrySelected',point)
+  }
+  selectingEntry=false;entryDrag.value=null;frozenProjection=null;drag=null
+}
+function pointerCancel(){selectingEntry=false;entryDrag.value=null;frozenProjection=null;drag=null}
 let timer: ReturnType<typeof setInterval> | undefined
 let disposed = false
 let pathGeneration = 0
@@ -113,7 +141,7 @@ const inset = computed(() => (props.showLivePath || props.savedReference) && cov
 const transform = computed(() => {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
   for (const group of [displayReference.value, displayTracks.value.flat(),
-    targetPoints.value, rings.value.flat(), position.value ? [position.value] : []]) {
+    targetPoints.value, rings.value.flat(), position.value ? [position.value] : [],props.entryPoint?[props.entryPoint]:[]]) {
     for (const p of group) {
       minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x)
       minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y)
@@ -125,7 +153,7 @@ const transform = computed(() => {
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
   return (p: PathPoint) => ({ x: width / 2 + (p.x - cx) * scale, y: height / 2 - (p.y - cy) * scale })
 })
-function polyline(points: PathPoint[]) {
+function polyline(points: readonly PathPoint[]) {
   if (!transform.value) return ''
   const step = Math.max(1, Math.ceil(points.length / 4000))
   return points.filter((_, i) => i % step === 0 || i === points.length - 1)
@@ -139,6 +167,14 @@ function polygonPath(polygon: readonly (readonly PathPoint[])[]) {
   }).join(' ') + ' Z').join(' ')
 }
 const referenceLine = computed(() => polyline(displayReference.value))
+const entryMarker=computed(()=>{
+  const point=entryDrag.value||props.entryPoint
+  return point&&transform.value?transform.value(point):null
+})
+const entryConnection=computed(()=>props.entryPlan?polyline(props.entryPlan.connection):'')
+const entryAccess=computed(()=>props.entryPlan?polyline([props.entryPlan.reference,props.entryPlan.anchor]):'')
+const entryAnchorMarker=computed(()=>props.entryPlan&&!props.entryPlan.access_verified&&transform.value
+  ? transform.value(props.entryPlan.anchor):null)
 const trackedLines = computed(() => displayTracks.value.map(polyline))
 const fieldPath = computed(() => polygonPath(rings.value))
 const forbiddenPaths = computed(() => rings.value.slice(1).map(ring => polygonPath([ring])))
@@ -172,6 +208,8 @@ defineExpose({ refreshPath })
   <el-card class="field-card" shadow="never">
     <template #header><div class="heading"><span><el-icon><MapLocation /></el-icon> {{ coverageMode ? '覆盖作业地图' : '实时路径与位置' }}</span><el-tag type="info">map · 米制坐标</el-tag></div></template>
     <el-alert v-if="pathError" :title="pathError" type="warning" :closable="false" />
+    <el-alert v-if="entryPicking" title="在地图点击作业入口；紫色入口可拖动。选点只修改草稿，请保存任务并重新规划。" type="info" :closable="false"/>
+    <div v-if="entryPlan" class="hint">入口参考距离：{{ entryPlan.distance_m.toFixed(2) }} m · 已验证田内连接 {{ entryPlan.connection_length_m.toFixed(2) }} m。{{ entryPlan.access_verified ? '用于起点比较的田内参考连接，不是车辆执行路线。' : '入口通道仅为规划示意；实际单点接近目标仍是覆盖起点。' }}</div>
     <div v-if="coverageMode" class="coverage-toolbar">
       <el-radio-group v-model="source" size="small" aria-label="作业区域数据来源">
         <el-radio-button value="actual">实际作业估计</el-radio-button>
@@ -190,7 +228,7 @@ defineExpose({ refreshPath })
     <el-alert v-if="coverageMode && coverage.error.value" :title="coverage.error.value" type="warning" :closable="false" />
     <div class="path-canvas">
       <svg v-if="transform" :viewBox="viewBox" role="img" :aria-label="coverageMode ? '内缩轮廓、规划路径、已完成、未完成、重复覆盖及禁入区域' : '参考路径、实际轨迹和机器人位置'"
-        @wheel.prevent="scale($event.deltaY < 0 ? 1.15 : 1 / 1.15)" @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="drag = null" @pointercancel="drag = null">
+        @wheel.prevent="scale($event.deltaY < 0 ? 1.15 : 1 / 1.15)" @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="pointerCancel">
         <defs>
           <pattern :id="gridId" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e4eae6" /></pattern>
           <pattern :id="forbiddenId" width="8" height="8" patternUnits="userSpaceOnUse"><rect width="8" height="8" fill="#d5dbe0" /><path d="M0 8 L8 0" stroke="#84919b" stroke-width="1" /></pattern>
@@ -210,6 +248,13 @@ defineExpose({ refreshPath })
         <g v-if="start && (!coverageMode || layers.reference)">
           <circle :cx="start.x" :cy="start.y" r="6" fill="#25845c" stroke="white" stroke-width="2"><title>路径起点（绿色）</title></circle>
           <text :x="start.x + (start.x > width / 2 ? -10 : 10)" :y="start.y - 10" :text-anchor="start.x > width / 2 ? 'end' : 'start'" class="endpoint-label" fill="#25845c">起点</text>
+        </g>
+        <polyline v-if="entryConnection" :points="entryConnection" fill="none" stroke="#a371bf" stroke-width="2" stroke-dasharray="7 4"><title>用于起点选择的田内参考连接；不是实际单点接近路线</title></polyline>
+        <polyline v-if="entryPlan&&!entryPlan.access_verified" :points="entryAccess" fill="none" stroke="#888" stroke-width="2" stroke-dasharray="2 6"><title>未验证入口通道，仅为距离示意</title></polyline>
+        <g v-if="entryAnchorMarker"><circle :cx="entryAnchorMarker.x" :cy="entryAnchorMarker.y" r="4" fill="white" stroke="#873cb2"/><text :x="entryAnchorMarker.x+8" :y="entryAnchorMarker.y+16" class="endpoint-label" fill="#873cb2">内缩安全点</text></g>
+        <g v-if="entryMarker" data-entry-marker :transform="`translate(${entryMarker.x} ${entryMarker.y})`" :style="{cursor:entryEditable?'move':'default'}">
+          <circle r="12" fill="transparent"/><path d="M 0 9 L 0 -13 L 13 -13 L 9 -7 L 0 -7" stroke="#873cb2" stroke-width="2" fill="#d9b6ef"/>
+          <text x="16" y="-9" class="endpoint-label" fill="#873cb2">入口</text>
         </g>
         <g v-if="end && (!coverageMode || layers.reference)">
           <circle :cx="end.x" :cy="end.y" r="6" fill="#c65d5d" stroke="white" stroke-width="2"><title>路径终点（红色）</title></circle>

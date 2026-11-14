@@ -3,7 +3,8 @@ import { computed, ref, watch, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRealtime } from '../../composables/useRealtime'
 import { useWorkspace } from '../../composables/useWorkspace'
-import { saveMission, previewMission, missionAction, downloadJson, getSavedPlanPath, loadSavedPlan, savePlannedPath } from '../../api/workspace'
+import { saveMission, previewMission, missionAction, downloadJson, getSavedPlanPath, loadSavedPlan, savePlannedPath, mapToWgs84 } from '../../api/workspace'
+import type { PathPoint } from '../../api/robot'
 import type { MissionDocument, MissionInput, MissionMode, GeoPoint, Preview, Projection, SavedPlanPath } from '../../api/workspace'
 import { coverageQualityFields, parameterFields } from './taskParameters'
 import { defaultTaskPoints } from './defaultTaskPoints'
@@ -19,6 +20,12 @@ const { context, refresh: refreshWorkspace } = useWorkspace()
 const name = ref(''), parameters = ref<Record<string, number | string | boolean>>({}), rows = ref<Row[]>([])
 const rings = ref<Row[][]>([]), ringIndex = ref(0), id = ref<string>(), revision = ref<number>()
 const origin = ref<Projection>(), preview = ref<Preview | null>(null), error = ref(''), busy = ref(false), previewBusy = ref(false)
+const entrySource=ref<'coordinates'|'map'>('coordinates'),entryLongitude=ref(''),entryLatitude=ref('')
+const entryLocal=ref<PathPoint|null>(null),entryPicking=ref(false),entryLoading=ref(false)
+const mapContainer=ref<HTMLElement|null>(null)
+let entryGeneration=0
+watch([entryLongitude,entryLatitude],()=>{entryLocal.value=null},{flush:'sync'})
+watch(entrySource,value=>{if(value==='coordinates')entryPicking.value=false})
 const minimumHeadland = computed(() => Math.hypot(
   Number(parameters.value.robot_length ?? 0.45) / 2 + Math.abs(Number(parameters.value.rotation_center_x ?? 0)),
   Number(parameters.value.robot_width ?? 0.2) / 2 + Math.abs(Number(parameters.value.rotation_center_y ?? 0)),
@@ -47,7 +54,8 @@ function copyParameters(value: Readonly<Record<string, number | string | boolean
 }
 const blank = (): Row => ({ longitude: '', latitude: '', dwell_time: Number(parameters.value.dwell_time ?? 2) })
 const toRows = (points: readonly GeoPoint[]): Row[] => points.map(p => ({ longitude: String(p.longitude), latitude: String(p.latitude), dwell_time: p.dwell_time ?? 2 }))
-const fingerprint = computed(() => JSON.stringify([name.value, rows.value, rings.value, parameters.value]))
+const fingerprint = computed(() => JSON.stringify([name.value, rows.value, rings.value, parameters.value,
+  entryLongitude.value,entryLatitude.value,entrySource.value]))
 const dirty = computed(() => !id.value || fingerprint.value !== lastSaved.value)
 const editableRows = computed(() => props.kind === 'waypoint' ? rows.value : rings.value[ringIndex.value] || [])
 const active = computed(() => context.value?.active_run)
@@ -80,6 +88,7 @@ function loadBoundary(data: Record<string, unknown> | null) {
   return raw.map(toRows)
 }
 function reset() {
+  ++entryGeneration;entryPicking.value=false;entryLoading.value=false
   const mission = props.mission
   name.value = mission?.name || (props.kind === 'waypoint' ? '新多点导航任务' : '新农田覆盖任务')
   parameters.value = copyParameters({ ...props.defaults, ...mission?.parameters })
@@ -90,6 +99,10 @@ function reset() {
   ringIndex.value = 0; id.value = mission?.id; revision.value = mission?.revision
   origin.value = mission ? copy(mission.projection) : undefined
   preview.value = mission ? copy(mission.preview) : null
+  entrySource.value=mission?.entry?.source||'coordinates'
+  entryLongitude.value=mission?.entry?String(mission.entry.longitude):''
+  entryLatitude.value=mission?.entry?String(mission.entry.latitude):''
+  entryLocal.value=mission?.preview.entry||null
   error.value = ''; lastSaved.value = fingerprint.value
   clearTimeout(timer)
   if (!mission || (props.kind === 'coverage' && !preview.value?.inset_polygons))
@@ -111,17 +124,46 @@ function payload(): MissionInput {
     }) }
   }
   return { name: name.value, mode: props.kind, parameters: copy(parameters.value),
+    ...(props.kind==='coverage'?{entry:entryInput()}:{}),
     waypoints: props.kind === 'waypoint' ? parsePoints(rows.value) : [], boundary,
     ...(revision.value ? { revision: revision.value } : {}), ...(origin.value ? { import_origin: origin.value } : {}) }
+}
+function entryInput() {
+  if(!entryLongitude.value.trim()&&!entryLatitude.value.trim())return null
+  const longitude=Number(entryLongitude.value),latitude=Number(entryLatitude.value)
+  if(!entryLongitude.value.trim()||!entryLatitude.value.trim()||!Number.isFinite(longitude)||!Number.isFinite(latitude))
+    throw Error('入口需要完整且有效的经纬度；也可以清除入口后按原方式规划')
+  if(longitude < -180 || longitude > 180 || latitude < -80 || latitude > 84)throw Error('入口经纬度超出 WGS84 / UTM 有效范围')
+  return {longitude,latitude,source:entrySource.value}
+}
+function clearEntry(){++entryGeneration;entryLongitude.value='';entryLatitude.value='';entryLocal.value=null;entryPicking.value=false;entryLoading.value=false}
+function pickEntry(){if(busy.value||executingThis.value)return;entrySource.value='map';entryPicking.value=true;mapContainer.value?.scrollIntoView({behavior:'smooth',block:'center'})}
+async function selectEntry(point:PathPoint){
+  if(busy.value||executingThis.value)return
+  const projection=origin.value||context.value?.origin
+  if(!projection){ElMessage.error('固定坐标原点尚未确认');return}
+  const generation=++entryGeneration,version=fingerprint.value
+  entryLoading.value=true
+  try{
+    const result=await mapToWgs84(point.x,point.y,projection)
+    if(disposed||generation!==entryGeneration||version!==fingerprint.value)return
+    entrySource.value='map';entryLongitude.value=String(result.longitude);entryLatitude.value=String(result.latitude)
+    entryLocal.value={x:result.x,y:result.y};entryPicking.value=false
+  }catch(value){if(!disposed&&generation===entryGeneration)ElMessage.error(value instanceof Error?value.message:'入口选点失败')}
+  finally{if(generation===entryGeneration)entryLoading.value=false}
 }
 async function buildPreview(silent = false) {
   const version = fingerprint.value
   try {
     const data = payload(); previewBusy.value = true
     const result = await previewMission(data)
-    if (!disposed && version === fingerprint.value) { preview.value = result; error.value = '' }
+    if (!disposed && version === fingerprint.value) { preview.value = result; entryLocal.value=result.entry||null; error.value = '' }
   } catch (value) {
-    if (!disposed && version === fingerprint.value) { preview.value = null; error.value = value instanceof Error ? value.message : '预览失败' }
+    if (!disposed && version === fingerprint.value) {
+      error.value = value instanceof Error ? value.message : '预览失败'
+      preview.value=props.kind==='coverage'&&preview.value&&error.value.includes('入口')
+        ? {...preview.value,entry:null,entry_anchor:null}:null
+    }
     if (!silent) ElMessage.error(error.value)
   } finally { previewBusy.value = false }
 }
@@ -176,6 +218,7 @@ async function importFile(event: Event) {
       if (task.mode) {
         if (task.mode !== props.kind) throw new Error('任务类型与当前栏目不符，请到对应的多点导航或全覆盖栏目导入')
         name.value = task.name; parameters.value = copyParameters({ ...props.defaults, ...task.parameters })
+        ++entryGeneration;entryLongitude.value=task.entry?String(task.entry.longitude):'';entryLatitude.value=task.entry?String(task.entry.latitude):'';entrySource.value=task.entry?.source||'coordinates';entryPicking.value=false;entryLoading.value=false
         rows.value = toRows(task.waypoints || []); rings.value = loadBoundary(task.boundary)
         origin.value = data.projection || task.projection
       } else if (props.kind === 'coverage') rings.value = loadBoundary(data)
@@ -230,7 +273,7 @@ async function savePath() {
   finally { busy.value = false; await refreshWorkspace() }
 }
 watch([() => props.planId, () => props.mission?.id, () => props.mission?.revision], () => void fetchSavedPath(), { immediate: true })
-onUnmounted(() => { disposed = true; ++savedPathGeneration; clearTimeout(timer) })
+onUnmounted(() => { disposed = true; ++savedPathGeneration; ++entryGeneration; clearTimeout(timer) })
 </script>
 
 <template>
@@ -239,6 +282,17 @@ onUnmounted(() => { disposed = true; ++savedPathGeneration; clearTimeout(timer) 
       <template #header><div class="editor-heading"><strong>{{ id ? '编辑' : '创建' }}{{ kind === 'waypoint' ? '多点导航任务' : '覆盖任务' }}</strong><el-tag :type="dirty ? 'warning' : 'success'">{{ dirty ? '有未保存内容' : `已保存 · v${revision}` }}</el-tag></div></template>
       <el-form label-position="top" :disabled="busy || executingThis">
         <el-form-item label="任务名称"><el-input v-model="name" maxlength="80" placeholder="例如：东侧试验田第一轮" /></el-form-item>
+        <div v-if="kind==='coverage'" class="entry-settings">
+          <strong>作业入口设置</strong>
+          <el-radio-group v-model="entrySource" aria-label="作业入口输入方式"><el-radio-button value="coordinates">输入经纬度</el-radio-button><el-radio-button value="map">地图选择入口</el-radio-button></el-radio-group>
+          <div class="parameter-grid">
+            <el-form-item label="入口经度（WGS84 十进制度）"><el-input v-model="entryLongitude" inputmode="decimal" placeholder="例如 117.0214"/></el-form-item>
+            <el-form-item label="入口纬度（WGS84 十进制度）"><el-input v-model="entryLatitude" inputmode="decimal" placeholder="例如 36.6468"/></el-form-item>
+          </div>
+          <el-button v-if="entrySource==='map'" :loading="entryLoading" @click="pickEntry">{{ entryPicking?'请在下方地图点击入口':'在地图上选入口' }}</el-button>
+          <el-button @click="clearEntry">清除入口</el-button>
+          <p class="hint">两种方式设置同一个固定入口，可拖动紫色入口标记调整。保存任务后，“生成覆盖路径”和“一键优化规划”都据此选择起点；清除入口则沿用原规则。入口仅用于选择规划起点。开始后仍先单点导航到绿色覆盖起点、对齐再跟踪，不要求先经过入口。</p>
+        </div>
         <div class="editor-toolbar">
           <el-button @click="editableRows.push(blank())">添加{{ kind === 'waypoint' ? '目标点' : '角点' }}</el-button>
           <el-button :disabled="!isFresh(devices?.gnss)" @click="capture">采集当前 RTK 点</el-button>
@@ -320,8 +374,12 @@ onUnmounted(() => { disposed = true; ++savedPathGeneration; clearTimeout(timer) 
       </template>
     </CoverageQuality>
     <div v-if="preview" class="preview-summary">{{ kind === 'coverage' ? `地块面积 ${(preview.area || 0).toFixed(2)} m² · 周界 ${preview.length.toFixed(2)} m` : `目标点 ${preview.points.length} 个 · 相邻点连线长 ${preview.length.toFixed(2)} m` }} · map 米制坐标</div>
-    <FieldMap :preview="displayPreview" :show-live-path="showLive" :saved-reference="savedReference" :coverage-mode="kind === 'coverage'"
-      :coverage-run="kind === 'coverage' ? displayRun : null" />
+    <div ref="mapContainer">
+      <FieldMap :preview="displayPreview" :show-live-path="showLive" :saved-reference="savedReference" :coverage-mode="kind === 'coverage'"
+        :entry-point="kind==='coverage'?entryLocal:null" :entry-picking="entryPicking&&!busy&&!executingThis"
+        :entry-editable="kind==='coverage'&&!busy&&!executingThis" :entry-plan="!dirty?displayRun?.entry:null"
+        @entry-selected="selectEntry" :coverage-run="kind === 'coverage' ? displayRun : null" />
+    </div>
   </div>
 </template>
 
@@ -334,4 +392,8 @@ onUnmounted(() => { disposed = true; ++savedPathGeneration; clearTimeout(timer) 
 .saved-path-card { margin-top: 20px; }
 .hint { color: #7c8a81; font-size: 12px; line-height: 1.8; }.actions { margin-top: 20px; }.preview-summary { margin: 18px 0 10px; padding: 14px; background: #eaf3ec; color: #376e4b; border-radius: 8px; font-size: 13px; }
 @media (max-width: 1100px) { .parameter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }@media (max-width: 620px) { .parameter-grid, .quality-parameters .parameter-grid { grid-template-columns: 1fr; } }
+</style>
+
+<style scoped>
+.entry-settings{padding:14px;border:1px solid #e0e7e2;background:#f7faf7;border-radius:8px;margin-bottom:18px}.entry-settings strong{display:block;margin-bottom:10px}.entry-settings .el-radio-group{margin-bottom:12px}.entry-settings .parameter-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
 </style>

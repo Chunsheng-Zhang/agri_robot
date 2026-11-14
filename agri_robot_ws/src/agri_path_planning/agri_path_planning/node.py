@@ -29,6 +29,8 @@ from .contour import plan_contour
 from .optimizer import optimize as optimize_path
 from .saved_path import read_saved_path
 from .curves import CURVES, curve_name
+from .entry import parse_entry
+from .entry_planner import manual_entry_path, contour_entry_path
 from agri_base.path_geometry import backward_flags, directed_poses, validate_point_turn_path, motion_signature, rotation_envelope
 
 _WORKER_PROGRESS = None
@@ -55,7 +57,7 @@ class CoverageAdapter(Node):
                     'angle_mode': 'SET_ANGLE', 'path_continuity': 'DUBINS_CC',
                     'operation_width': 0.8, 'min_turning_radius': 1.0,
                     'linear_curv_change': 2.0, 'optimization_config': '{}', 'saved_path_file': '',
-                    'allow_reverse': False}
+                    'allow_reverse': False, 'entry_config': 'null'}
         for name, value in defaults.items():
             self.declare_parameter(name, value)
         for name in ('robot_width', 'sampling_distance', 'planning_timeout',
@@ -86,6 +88,7 @@ class CoverageAdapter(Node):
         self.planning_progress = None
         self.planning_started = None
         self.plan_metadata = None
+        self.entry_reference = None
         self.mode, self.mode_revision, self.safety_time, self.owner = None, None, -math.inf, ''
         self.add_on_set_parameters_callback(self.configure_idle)
         self.create_timer(0.2, self.tick)
@@ -120,6 +123,22 @@ class CoverageAdapter(Node):
                     return SetParametersResult(successful=False, reason='Invalid planning parameter')
         return SetParametersResult(successful=True)
 
+    def ensure_worker(self):
+        if self.contour_executor is None:
+            context = multiprocessing.get_context('spawn')
+            self.contour_cancel = context.Event()
+            self.progress_queue = context.Queue(maxsize=64)
+            self.contour_executor = ProcessPoolExecutor(max_workers=1,
+                mp_context=context, initializer=contour_worker_setup,
+                initargs=(self.contour_cancel,self.progress_queue))
+
+    def entry_settings(self):
+        names=('operation_width','headland_width','min_turning_radius','sampling_distance','robot_width',
+               'robot_length','rotation_safety_margin','rotation_center_x','rotation_center_y',
+               'path_continuity','linear_curv_change','allow_reverse','route_mode')
+        return {**{k:self.get_parameter(k).value for k in names},'entry':self.entry_reference,
+                'planning_timeout':max(.001,self.deadline-monotonic())}
+
     def on_origin(self, msg):
         self.origin_matches = json.loads(msg.data) == self.frame.identity
 
@@ -140,7 +159,8 @@ class CoverageAdapter(Node):
             data,points=read_saved_path(self.get_parameter('saved_path_file').value,self.frame,polygon,
                 self.get_parameter('robot_width').value,self.get_parameter('allow_reverse').value,
                 expected_envelope=rotation_envelope(*[self.get_parameter(k).value for k in (
-                    'robot_length','robot_width','rotation_safety_margin','rotation_center_x','rotation_center_y')]))
+                    'robot_length','robot_width','rotation_safety_margin','rotation_center_x','rotation_center_y')]),
+                expected_entry=parse_entry(json.loads(self.get_parameter('entry_config').value),self.frame))
             if not self.origin_matches or not self.mode_ready():raise ValueError('加载期间原点或控制状态改变')
             self.token+=1
             self.planning_progress = None
@@ -171,6 +191,7 @@ class CoverageAdapter(Node):
         try:
             self.polygon = load_field(self.get_parameter('boundary_file').value, self.frame)
             self.plan_metadata = None
+            self.entry_reference = parse_entry(json.loads(self.get_parameter('entry_config').value),self.frame)
             self.planning_progress = None
             self.planning_started = monotonic()
             if contour or smart:
@@ -179,20 +200,17 @@ class CoverageAdapter(Node):
                 self.state, self.reason = 'PLANNING', '正在搜索往复式作业角度和行顺序（固定原地转向）' if smart else '正在由内向外生成连续回形路径'
                 self.deadline = monotonic() + self.get_parameter('planning_timeout').value
                 empty = Path(); empty.header.frame_id = 'map'; self.path_pub.publish(empty)
-                if self.contour_executor is None:
-                    context = multiprocessing.get_context('spawn')
-                    self.contour_cancel = context.Event()
-                    self.progress_queue = context.Queue(maxsize=64)
-                    self.contour_executor = ProcessPoolExecutor(max_workers=1,
-                        mp_context=context, initializer=contour_worker_setup,
-                        initargs=(self.contour_cancel,self.progress_queue))
+                self.ensure_worker()
                 self.contour_cancel.clear()
                 if smart:
                     settings=json.loads(self.get_parameter('optimization_config').value)
                     if not isinstance(settings,dict):raise ValueError('智能规划配置必须为对象')
+                    settings['entry']=self.entry_reference
                     self.planning_progress={'phase':'INITIALIZING','evaluated_count':0,'feasible_count':0,
                         'stage_completed':0,'stage_total':0,'elapsed_seconds':0.}
                     self.contour_future=self.contour_executor.submit(optimize_worker,self.polygon.wkb,settings,self.token)
+                elif self.entry_reference is not None:
+                    self.contour_future = self.contour_executor.submit(contour_entry_path,self.polygon.wkb,self.entry_settings())
                 else:
                     self.contour_future = self.contour_executor.submit(plan_contour,self.polygon.wkb,
                         width=self.get_parameter('operation_width').value,
@@ -210,8 +228,8 @@ class CoverageAdapter(Node):
             goal.frame_id = 'map'
             goal.generate_decomp = self.get_parameter('generate_decomp').value
             goal.generate_headland = self.get_parameter('headland_width').value > 0
-            goal.generate_route = True
-            goal.generate_path = True
+            goal.generate_route = self.entry_reference is None
+            goal.generate_path = self.entry_reference is None
             goal.headland_mode.mode = 'CONSTANT'
             goal.headland_mode.width = float(self.get_parameter('headland_width').value)
             goal.swath_mode.mode, goal.swath_mode.objective = self.get_parameter('angle_mode').value, 'LENGTH'
@@ -266,6 +284,15 @@ class CoverageAdapter(Node):
             result = wrapped.result
             if wrapped.status != GoalStatus.STATUS_SUCCEEDED or result.error_code != 0:
                 raise ValueError(f'Coverage action failed: {result.error_code}')
+            if self.entry_reference is not None:
+                if result.coverage_path.header.frame_id != 'map':
+                    raise ValueError('OpenNav作业行坐标系不是map')
+                rows=[((float(s.start.x),float(s.start.y)),(float(s.end.x),float(s.end.y))) for s in result.coverage_path.swaths]
+                if not rows or len(rows)>1500 or any(not all(math.isfinite(v) and abs(v)<=self.frame.max_radius for pt in row for v in pt) for row in rows):
+                    raise ValueError('OpenNav入口作业行为空、超限或坐标异常')
+                self.ensure_worker();self.contour_cancel.clear();self.contour_token=token
+                self.contour_future=self.contour_executor.submit(manual_entry_path,self.polygon.wkb,rows,self.entry_settings())
+                return
             path = result.nav_path
             if path.header.frame_id != 'map':
                 raise ValueError('Planner returned a different coordinate frame')
@@ -380,6 +407,7 @@ class CoverageAdapter(Node):
                     self.path_pub.publish(path)
                     self.state='SUCCEEDED'
                     self.reason=(f'智能规划完成：{value["metadata"]["mode"]}，{len(points)}点' if value.get('optimization') is not None
+                        else f'入口覆盖规划完成：{len(points)}点' if value['metadata'].get('entry') and value['metadata']['mode']!='CONTOUR'
                         else f'连续回形由内向外：{value["metadata"]["ring_count"]}层，{len(points)}点')
                 except Exception as exc:
                     self.state,self.reason='FAILED',str(exc)

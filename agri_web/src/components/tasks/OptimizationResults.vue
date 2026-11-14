@@ -20,18 +20,20 @@ const names: Record<string,string> = {BOUSTROPHEDON:'牛耕',SNAKE:'蛇形',SPIR
         <div v-if="selected" class="result-metrics">
           <div><span>推荐作业角度</span><b>{{ numberText(selected.angle_rad * 180 / Math.PI, 2) }}°</b></div>
           <div><span>最小安全地头</span><b>{{ numberText(selected.headland_width_m, 3) }} m</b></div>
-          <div><span>路径总长度</span><b>{{ numberText(selected.length_m, 2) }} m</b></div>
+          <div><span>{{ run.entry ? '计分长度（含入口）' : '路径总长度' }}</span><b>{{ numberText(selected.length_m, 2) }} m</b></div>
           <div><span>原地转向点</span><b>{{ selected.point_turn_count ?? 0 }}</b></div>
         </div>
         <p v-if="selected">往复式{{ selected.order === 'LOCAL_2OPT' ? '（行顺序已局部优化）' : '（基础行顺序）' }} · 覆盖 {{ numberText(selected.coverage_percent, 2) }}% · 重复覆盖 {{ numberText(selected.overlap_percent, 2) }}% · 综合分 {{ numberText(selected.score, 4) }}（越低越好）。</p>
+        <p v-if="selected && run.entry">正式路径 {{ numberText(selected.working_length_m,2) }} m ＋ 入口参考距离 {{ numberText(selected.entry_length_m,2) }} m；起步方案 {{ selected.variant+1 }}。入口连接不计作业覆盖，田外示意通道未验证。</p>
         <p>固定权重：覆盖率 0.5、重复覆盖率 0.3、总长度 0.2；在同一整田评价网格比较，机具有效幅宽保持不变。长度采用 L/(L+A/W) 归一化，含全部换行连接；不评价能耗或时间。</p>
         <p>车辆包络：长 {{ numberText(result.headland_search?.robot_length_m, 3) }} m、宽 {{ numberText(result.headland_search?.robot_width_m, 3) }} m、安全余量 {{ numberText(result.headland_search?.safety_margin_m, 3) }} m。转向点停车等待、原地对齐后继续，默认尺寸须实测核对。</p>
         <p>已比较 {{ result.evaluated_count }} 个候选 · 用时 {{ numberText(result.elapsed_seconds, 2) }} s · {{ result.state === 'FAILED' ? '没有可执行方案' : result.search_complete ? '已完成全部预定角度及行顺序比较' : result.budget_exhausted ? '历史结果：达到计算预算' : '完成本轮角度搜索' }}；不保证全局最优。实际评价网格 {{ numberText(result.final_resolution_m, 3) }} m。</p>
         <details><summary>角度与行顺序候选对比</summary>
           <div class="table-scroll"><table>
-            <thead><tr><th>编号</th><th>角度 °</th><th>行顺序</th><th>覆盖 %</th><th>重复 %</th><th>总长度 m</th><th>综合评分</th><th>状态</th></tr></thead>
+            <thead><tr><th>编号</th><th>角度 °</th><th v-if="run.entry">起步方案</th><th>行顺序</th><th>覆盖 %</th><th>重复 %</th><th>{{ run.entry ? '计分长度 m' : '总长度 m' }}</th><th>综合评分</th><th>状态</th></tr></thead>
             <tbody><tr v-for="candidate in result.candidates" :key="candidate.id" :class="{ chosen: candidate.id === selected?.id }">
               <td>{{ candidate.id }}</td><td>{{ numberText(candidate.angle_rad * 180 / Math.PI, 2) }}</td>
+              <td v-if="run.entry">{{ candidate.variant+1 }}</td>
               <td>{{ candidate.order === 'LOCAL_2OPT' ? '局部优化' : '往复式' }}</td>
               <td>{{ numberText(candidate.coverage_percent, 2) }}</td><td>{{ numberText(candidate.overlap_percent, 2) }}</td>
               <td>{{ numberText(candidate.length_m, 2) }}</td><td>{{ numberText(candidate.score, 4) }}</td>

@@ -40,6 +40,12 @@ class ModeCommand(StrictModel):
     mode: WorkMode
 
 
+class MapCoordinate(StrictModel):
+    x: float
+    y: float
+    projection: dict
+
+
 class Workspace:
     def __init__(self, require_bridge, robot_snapshot, store=None):
         self.require_bridge, self.robot_snapshot = require_bridge, robot_snapshot
@@ -161,6 +167,7 @@ class Workspace:
                     state, reason = 'WAITING_PATH', '等待本次规划的参考路径，尚未允许开始'
                 else:
                     run['reference_fingerprint'] = signature
+                    run['entry']=(saved.get('planning') or {}).get('entry')
                     state = 'READY'
                     if run.get('coverage_quality_version') == 1:
                         try:
@@ -232,7 +239,8 @@ class Workspace:
             raise HTTPException(409, '任务类型不匹配')
         mission['parameters'] = (WaypointParameters if mode == 'waypoint' else CoverageParameters)(
             **mission['parameters']).model_dump()
-        self.store.preview(Mission(**{k: mission[k] for k in ('name', 'mode', 'parameters', 'waypoints', 'boundary')}), origin)
+        self.store.preview(Mission(**{**{k: mission[k] for k in ('name', 'mode', 'parameters', 'waypoints', 'boundary')},
+                                    'entry':mission.get('entry')}), origin)
         return mission
 
     def plan(self, identity, optimized=False):
@@ -257,7 +265,7 @@ class Workspace:
                     'robot_width': float(p['robot_width']),
                     'operation_width': float(p['operation_width']), 'min_turning_radius': float(p['min_turning_radius']),
                     'default_turn_point_distance': float(p['sampling_distance'])})
-                if p['route_mode'] == 'CONTOUR' and not optimized:
+                if (p['route_mode'] == 'CONTOUR' or mission.get('entry')) and not optimized:
                     curve = gateway.get_parameters('coverage_server', ['linear_curv_change'])
                     gateway.parameters('coverage_adapter', {'operation_width':float(p['operation_width']),
                         'min_turning_radius':float(p['min_turning_radius']),
@@ -269,8 +277,10 @@ class Workspace:
                     gateway.parameters('coverage_adapter',{'optimization_config':json.dumps(settings,allow_nan=False)})
                 gateway.parameters('coverage_adapter', {**{k: p[k] for k in (
                     'robot_width','robot_length','rotation_safety_margin','rotation_center_x','rotation_center_y',
-                    'headland_width', 'swath_angle', 'sampling_distance', 'route_mode', 'angle_mode', 'path_continuity')},
+                    'headland_width', 'swath_angle', 'sampling_distance', 'route_mode', 'angle_mode', 'path_continuity',
+                    'operation_width','min_turning_radius')},
                     'allow_reverse':False if optimized else bool(p.get('allow_reverse',False)),
+                    'entry_config':json.dumps(mission.get('entry'),allow_nan=False),
                     'boundary_file': str(boundary), 'output_directory': str(directory / 'paths'), 'generate_decomp': False})
                 self.plan_sequence = self.robot_snapshot().get('reference_sequence', 0)
                 self.plan_requested = monotonic()
@@ -327,6 +337,7 @@ class Workspace:
                         atomic_json(directory/'paths/optimization.json',{**report,'reused_from':plan_id})
                 gateway=self.gateway()
                 gateway.parameters('coverage_adapter',{'boundary_file':str(directory/'config/field.json'),
+                    'entry_config':json.dumps(mission.get('entry'),allow_nan=False),
                     'output_directory':str(directory/'paths'),'saved_path_file':str(directory/'config/saved_path.json'),
                     'robot_width':float(mission['parameters']['robot_width']),
                     **{k:float(mission['parameters'][k]) for k in ('robot_length','rotation_safety_margin','rotation_center_x','rotation_center_y')},
@@ -376,6 +387,9 @@ class Workspace:
                         raise HTTPException(409,'参考路径航向或方向不一致，请重新加载/规划后开始')
                 tracker = {k: p[k] for k in ('lookahead', 'speed', 'max_angular', 'completion_tolerance',
                                             'start_tolerance', 'search_window', 'max_path_error')}
+                if mission.get('entry'):
+                    # Entry validates the planned start, never routes the robot to the entry.
+                    read_plan(self.store,mission,run['id'],allow_pending_save=True)
                 gateway.parameters('path_tracker', {**tracker, 'allow_reverse':bool(p.get('allow_reverse',False)),
                     'trajectory_directory': str(directory / 'tracks')})
                 source = 'tracking'
@@ -444,6 +458,20 @@ def install_routes(app, require_bridge, robot_snapshot):
             return {**workspace.store.preview(data, origin), 'projection': origin, 'origin_source': source}
         except (ValueError, TypeError, KeyError) as exc:
             raise HTTPException(422, str(exc)) from exc
+
+    @router.post('/api/coordinates/map-to-wgs84')
+    def map_to_wgs84(data: MapCoordinate):
+        from .missions import LocalFrame
+        from pyproj.enums import TransformDirection
+        import math
+        origin,_=workspace.origin()
+        if data.projection!=origin:
+            raise HTTPException(409,'地图固定原点已改变，请刷新后重新选择入口')
+        frame=LocalFrame(origin['latitude'],origin['longitude'],workspace.store.config()['/**']['ros__parameters'].get('max_local_radius',5000))
+        if math.hypot(data.x,data.y)>frame.max_radius:
+            raise HTTPException(422,'入口超出局部工作范围')
+        longitude,latitude=frame.transformer.transform(frame.e0+data.x,frame.n0+data.y,direction=TransformDirection.INVERSE)
+        return {'longitude':longitude,'latitude':latitude,'projection':origin,'x':data.x,'y':data.y}
 
     @router.post('/api/missions')
     def create(data: Mission):

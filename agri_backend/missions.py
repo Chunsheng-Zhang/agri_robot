@@ -57,6 +57,12 @@ class GeoPoint(StrictModel):
     dwell_time: float = Field(default=2.0, ge=0, le=600)
 
 
+class FieldEntry(StrictModel):
+    longitude: float = Field(ge=-180,le=180)
+    latitude: float = Field(ge=-80,le=84)
+    source: Literal['coordinates','map'] = 'coordinates'
+
+
 class WaypointParameters(StrictModel):
     max_linear: float = Field(default=0.2, gt=0, le=1)
     min_linear: float = Field(default=0.03, gt=0, le=1)
@@ -133,9 +139,16 @@ class Mission(StrictModel):
     mode: Literal['waypoint', 'coverage']
     waypoints: list[GeoPoint] = Field(default_factory=list, max_length=500)
     boundary: dict | None = None
+    entry: FieldEntry | None = None
     parameters: dict = Field(default_factory=dict)
     revision: int | None = Field(default=None, ge=1)
     import_origin: dict | None = None
+
+    @model_validator(mode='after')
+    def entry_is_coverage_only(self):
+        if self.mode!='coverage' and self.entry is not None:
+            raise ValueError('作业入口仅用于覆盖任务')
+        return self
 
 
 class MissionStore:
@@ -180,6 +193,9 @@ class MissionStore:
             return {'frame_id': 'map', 'points': points, 'rings': [], 'area': None,
                     'length': sum(math.dist((a['x'], a['y']), (b['x'], b['y'])) for a, b in zip(points, points[1:]))}
         polygon = field_from_data(mission.boundary, frame)
+        from agri_path_planning.entry import parse_entry, EntryConnector
+        entry = parse_entry(mission.entry.model_dump() if mission.entry else None,frame)
+        connector = EntryConnector(polygon,parameters.model_dump(),entry) if entry else None
         rings = [[{'x': x, 'y': y} for x, y in ring.coords]
                  for ring in [polygon.exterior, *polygon.interiors]]
         inset = polygon.buffer(-parameters.headland_width) if parameters.headland_width else polygon
@@ -189,7 +205,8 @@ class MissionStore:
                           for piece in pieces if piece.geom_type == 'Polygon']
         return {'frame_id': 'map', 'points': [], 'rings': rings,
                 'area': polygon.area, 'length': polygon.length,
-                'inset_polygons': inset_polygons, 'inset_distance_m': parameters.headland_width}
+                'inset_polygons': inset_polygons, 'inset_distance_m': parameters.headland_width,
+                'entry':entry,'entry_anchor':dict(zip(('x','y'),connector.anchor)) if connector else None}
 
     def path(self, identity):
         if not re.fullmatch('[0-9a-f]{32}', identity):
@@ -220,6 +237,7 @@ class MissionStore:
                     'name': mission.name, 'mode': mission.mode,
                     'waypoints': [p.model_dump() for p in mission.waypoints], 'boundary': mission.boundary,
                     'parameters': parameters, 'projection': origin, 'preview': preview,
+                    'entry':mission.entry.model_dump() if mission.entry else None,
                     'created_at': existing['created_at'] if existing else now(), 'updated_at': now()}
         atomic_json(self.path(identity), document)
         return document
