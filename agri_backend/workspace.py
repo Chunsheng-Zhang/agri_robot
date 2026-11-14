@@ -9,7 +9,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from threading import Lock
 from time import monotonic
-from typing import Literal
 
 import yaml
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -22,6 +21,7 @@ from .missions import Mission, MissionStore, StrictModel, WaypointParameters, Co
 from .coverage_quality_jobs import PlanQualityJobs, snapshot as quality_snapshot
 from .coverage_map import CoverageMaps
 from .saved_plans import SavedPlans, read_plan
+from agri_base.modes import WORK_MODES, MODE_SOURCE, AUTONOMOUS_SOURCES, WorkMode
 
 
 class ManualCommand(StrictModel):
@@ -37,7 +37,7 @@ class StopCommand(StrictModel):
 
 
 class ModeCommand(StrictModel):
-    mode: Literal['base', 'waypoint', 'coverage']
+    mode: WorkMode
 
 
 class Workspace:
@@ -81,13 +81,13 @@ class Workspace:
     def require_idle(self, mode=None):
         snapshot = device_cache.snapshot()
         safety = snapshot['safety']
-        if not safety['fresh'] or safety.get('mode') not in ('base', 'waypoint', 'coverage'):
+        if not safety['fresh'] or safety.get('mode') not in WORK_MODES:
             raise HTTPException(503, '安全状态未更新，请启动新版 ROS 核心')
         if mode and safety['mode'] != mode:
             raise HTTPException(409, '请先选择与任务对应的工作模式')
         if safety.get('owner'):
             raise HTTPException(409, '已有控制任务，请先取消任务或释放手柄/遥控')
-        for key in ('waypoint', 'tracking', 'planning'):
+        for key in (*AUTONOMOUS_SOURCES, 'planning'):
             if snapshot[key]['fresh'] and snapshot[key].get('state') in ('ACQUIRING', 'RUNNING', 'PAUSED', 'PLANNING'):
                 raise HTTPException(409, '请先取消现有任务并等待停止确认')
         return safety
@@ -110,7 +110,7 @@ class Workspace:
         if not self.active:
             # Reconnect observations after backend restart; never restart a controller here.
             for candidate in self.store.list_runs():
-                source = 'waypoint' if candidate['mode'] == 'waypoint' else 'tracking'
+                source = MODE_SOURCE[candidate['mode']]
                 status = snapshot[source] if candidate['stage'] == 'execution' else snapshot['planning']
                 expected = self.store.run_path(candidate['id']) / ('tracks' if candidate['stage'] == 'execution' else 'paths')
                 actual = status.get('run_directory' if candidate['stage'] == 'execution' else 'output_directory')
@@ -170,7 +170,7 @@ class Workspace:
                             # motion permission. Report the failure separately.
                             run['coverage_quality_error'] = str(exc)
         else:
-            status = snapshot['waypoint' if run['mode'] == 'waypoint' else 'tracking']
+            status = snapshot[MODE_SOURCE[run['mode']]]
             if not status['fresh']:
                 return
             received = monotonic() - (status.get('age_seconds') or 0)
@@ -180,10 +180,11 @@ class Workspace:
         if state != run['state'] or reason != run['reason']:
             run['state'], run['reason'] = state, reason
             if run['stage'] == 'execution':
-                run['elapsed_seconds'] = snapshot['waypoint' if run['mode'] == 'waypoint' else 'tracking'].get('elapsed_seconds')
+                run['elapsed_seconds'] = snapshot[MODE_SOURCE[run['mode']]].get('elapsed_seconds')
             self.store.save_run(run)
 
     def context(self):
+        from .following import following_manager
         # Polling must not wait behind a long lifecycle transition.
         if self.lock.acquire(blocking=False):
             try:
@@ -206,11 +207,17 @@ class Workspace:
                 'missions': missions, 'runs': self.store.list_runs(), 'active_run': active or None,
                 'config_file': str(self.store.config_path),
                 'events': device_cache.recent_events(),
-                'mode': device_cache.snapshot()['safety'].get('mode')}
+                'mode': device_cache.snapshot()['safety'].get('mode'),
+                'teaching': following_manager.recording_status()}
 
     def select_mode(self, mode):
         # Mode changes and estop remain available even if a mission operation is waiting on ROS.
         gateway = self.gateway()
+        if mode not in WORK_MODES:
+            raise HTTPException(422, '未知运行模式')
+        safety = device_cache.snapshot()['safety']
+        if safety['fresh'] and safety.get('mode') == mode:
+            return {'success': True, 'message': f'{mode}; mode unchanged', 'changed': False}
         gateway.stop()
         result = gateway.trigger(f'/system/mode/{mode}')
         self.event('MODE_SELECTED', mode=mode)
@@ -574,7 +581,7 @@ def install_routes(app, require_bridge, robot_snapshot):
                     active and active['id'] == identity and active['state'] not in DELETABLE_RUN_STATES):
                 raise HTTPException(409, '任务尚未结束，请先取消任务并等待停止确认')
             snapshot = device_cache.snapshot()
-            for source in ('waypoint', 'tracking', 'planning'):
+            for source in (*AUTONOMOUS_SOURCES, 'planning'):
                 live = snapshot[source]
                 location = live.get('output_directory' if source == 'planning' else 'run_directory')
                 expected = directory / ('paths' if source == 'planning' else 'tracks')
@@ -602,7 +609,7 @@ def install_routes(app, require_bridge, robot_snapshot):
             run = json.loads((directory / 'run.json').read_text())
             if run['state'] in ('PREPARING', 'PLANNING', 'ACQUIRING', 'RUNNING', 'PAUSED'):
                 raise HTTPException(409, '任务尚未结束，请先停车并取消，再下载完整数据')
-            source = 'waypoint' if run['mode'] == 'waypoint' else 'tracking'
+            source = MODE_SOURCE[run['mode']]
             live = device_cache.snapshot()[source]
             if live['fresh'] and live.get('run_directory') == str(directory / 'tracks') and live.get('state') in ('RUNNING', 'PAUSED', 'ACQUIRING'):
                 raise HTTPException(409, '正在等待控制器停止并关闭记录文件，请稍后重试')

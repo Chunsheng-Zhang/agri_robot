@@ -15,6 +15,7 @@ from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 
 from .coordinates import frame_from_node, finite_positive
+from .modes import SOURCE_MODE
 from agri_interfaces.srv import AcquireControl
 
 
@@ -129,7 +130,7 @@ class TaskNode(Node):
     def on_safety(self, msg):
         data = json.loads(msg.data)
         self.mode_revision = data.get('mode_revision', 0)
-        self.mode_matches = data.get('mode') == {'waypoint': 'waypoint', 'tracking': 'coverage'}[self.source]
+        self.mode_matches = data.get('mode') == SOURCE_MODE[self.source]
         self.motion_inhibited = data.get('motion_inhibited', data.get('emergency_stop', True))
         if self.state in ('RUNNING', 'PAUSED', 'ACQUIRING') and not self.mode_matches:
             self.generation += 1

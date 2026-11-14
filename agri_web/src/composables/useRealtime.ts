@@ -113,7 +113,7 @@ export function numberText(value: number | null | undefined, digits = 2): string
 }
 
 export function modeText(value: string | null | undefined): string {
-  return ({ manual: '手柄遥控', waypoint: '多点导航', tracking: '路径跟踪', web: 'Web 遥控' } as Record<string, string>)[value ?? '']
+  return ({ manual: '手柄遥控', waypoint: '多点导航', tracking: '路径跟踪', following: '示教路径跟随', web: 'Web 遥控' } as Record<string, string>)[value ?? '']
     ?? (value ? value : '无控制任务')
 }
 

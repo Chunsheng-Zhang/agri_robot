@@ -122,3 +122,15 @@ coverage_adapter:
     sampling_distance: 0.1
     planning_timeout: 120.0
     generate_decomp: false
+
+# Taught-road following is independent of coverage tasks.
+path_follower:
+  ros__parameters:
+    lookahead: 0.5
+    speed: 0.1
+    max_angular: 0.5
+    completion_tolerance: 0.15
+    start_tolerance: 0.3
+    search_window: 1.0
+    max_path_error: 0.5
+    allow_reverse: false

@@ -229,6 +229,7 @@ mgx23_ws/data/**
 /data/logs/
 /data/experiments/
 /data/web/
+/data/taught_paths/
 /data/paths/coverage_*.json
 
 # Keep the root project instructions and persistent user requirements versionable.

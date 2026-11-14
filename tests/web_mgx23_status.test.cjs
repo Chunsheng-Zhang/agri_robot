@@ -25,6 +25,7 @@ function fixture() {
   }
   const modules = {
     vue, '@element-plus/icons-vue': dependency('@element-plus/icons-vue'),
+    '../../api/workspace': { workModeText: mode => mode || '运行模式未更新' },
     '../../composables/useRealtime': {
       useRealtime: () => realtime, modeText: () => '',
       numberText: value => value == null ? '--' : String(value),
@@ -60,7 +61,7 @@ test('GNSS panel shows four initialization flags and two unknown error flags', a
   assert.doesNotMatch(html, /初始化成功/)
   for (const label of ['滤波器收敛', '收到 PPS 信号', '时间同步成功', '解析到 RTK 数据']) assert.ok(html.includes(label))
   assert.ok(html.includes('GNSS 数据差') && html.includes('GNSS 数据无效'))
-  assert.equal((html.match(/未更新/g) || []).length, 9) // Pose, speed, summary, four init and two GNSS flags.
+  assert.equal((html.match(/未更新/g) || []).length, 11) // Work mode, authority, pose, speed, summary, four init and two GNSS flags.
 })
 
 test('each missing condition is visible, and all four satisfied show success', async () => {
@@ -90,7 +91,7 @@ test('stale source, delayed snapshot or lost HTTP freshness clears previous gree
     expire()
     const html = await f.render()
     assert.doesNotMatch(html, /初始化成功|已满足/)
-    assert.equal((html.match(/未更新/g) || []).length, 9)
+    assert.equal((html.match(/未更新/g) || []).length, 11)
     for (const label of ['GNSS 数据差', 'GNSS 数据无效']) {
       assert.match(html, new RegExp(`${label}</span>\\s*<div[^>]*data-type="info"[^>]*>未更新</div>`))
     }

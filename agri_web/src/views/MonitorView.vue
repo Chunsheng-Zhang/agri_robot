@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { useRealtime } from '../composables/useRealtime'
 import FieldMap from '../components/dashboard/FieldMap.vue'
 import RobotStatus from '../components/dashboard/RobotStatus.vue'
 import SafetyStatus from '../components/dashboard/SafetyStatus.vue'
@@ -6,14 +8,17 @@ import CameraMonitor from '../components/dashboard/CameraMonitor.vue'
 import LidarMonitor from '../components/LidarMonitor.vue'
 import ManualControl from '../components/ManualControl.vue'
 import ModeSelector from '../components/ModeSelector.vue'
+const { devices, safetyFresh } = useRealtime()
+const pathSource = computed(() => devices.value?.safety.mode === 'following' ? 'following'
+  : devices.value?.safety.mode === 'waypoint' ? 'waypoint' : 'tracking')
 </script>
 <template>
   <div>
     <h1>作业监控</h1>
-    <div class="task-links"><span>任务配置与执行：</span><router-link to="/tasks">多点导航 →</router-link><router-link to="/planning">全覆盖规划与跟踪 →</router-link></div>
+    <div class="task-links"><span>任务配置与执行：</span><router-link to="/tasks">多点导航 →</router-link><router-link to="/planning">全覆盖规划与跟踪 →</router-link><router-link to="/following">路径跟随 →</router-link></div>
     <SafetyStatus />
-    <div class="monitor-grid"><FieldMap /><RobotStatus /></div>
-    <ModeSelector :modes="['base']" />
+    <div class="monitor-grid"><FieldMap :path-source="pathSource" :show-live-path="safetyFresh && devices?.safety.mode !== 'base'"/><RobotStatus /></div>
+    <ModeSelector />
     <ManualControl />
     <div class="monitor-grid"><CameraMonitor /><LidarMonitor /></div>
   </div>

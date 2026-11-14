@@ -12,11 +12,14 @@ from agri_base.recording import open_recording
 from .controller import Polyline, validate_velocity_limit
 from .coverage import CoverageController, AlignmentTimeout
 from agri_base.path_geometry import directed_poses, point_turn_indices
+from agri_base.path_geometry import motion_signature
 
 
 class PathTracker(TaskNode):
-    def __init__(self):
-        super().__init__('path_tracker', 'tracking')
+    def __init__(self, following=False):
+        self.following = following
+        self.reference_topic = '/following/reference_path' if following else '/reference_path'
+        super().__init__('path_follower' if following else 'path_tracker', 'following' if following else 'tracking')
         defaults = {'lookahead': 0.8, 'speed': 0.2, 'max_angular': 1.0,
                     'completion_tolerance': 0.2, 'search_window': 1.0,
                     'start_tolerance': 0.8, 'max_path_error': 2.0,
@@ -32,17 +35,19 @@ class PathTracker(TaskNode):
         if self.get_parameter('alignment_tolerance').value >= math.pi / 2:
             raise ValueError('alignment_tolerance must be less than pi/2')
         self.pending_path = None
+        self.reference_fingerprint = None
         self.controller = None
         self.record_file, self.record_writer = None, None
         self.approach_file, self.approach_writer = None, None
         self.alignment_file, self.alignment_writer = None, None
         self.record_count = 0
+        self.lateral_error, self.heading_error = None, None
         self.last_plot = -math.inf
         self.trajectory = Path()
         self.trajectory.header.frame_id = 'map'
-        self.error_pub = self.create_publisher(Vector3Stamped, '/tracking/error', 1)
-        self.track_pub = self.create_publisher(Path, '/tracked_path', 1)
-        self.path_subscription = self.create_subscription(Path, '/reference_path', self.on_path, 10)
+        self.error_pub = self.create_publisher(Vector3Stamped, '/following/error' if following else '/tracking/error', 1)
+        self.track_pub = self.create_publisher(Path, '/following/tracked_path' if following else '/tracked_path', 1)
+        self.path_subscription = self.create_subscription(Path, self.reference_topic, self.on_path, 10)
         self.path_transient = False
         self.create_timer(1.0, self.refresh_path_qos)
         self.create_timer(1 / self.get_parameter('control_rate').value, self.tick)
@@ -70,7 +75,7 @@ class PathTracker(TaskNode):
         return super().handle_request(action, response)
 
     def refresh_path_qos(self):
-        publishers = self.get_publishers_info_by_topic('/reference_path')
+        publishers = self.get_publishers_info_by_topic(self.reference_topic)
         if len(publishers) > 1:
             self.pending_path = None
             if self.state in ('RUNNING', 'PAUSED', 'ACQUIRING'):
@@ -83,11 +88,11 @@ class PathTracker(TaskNode):
         if transient != self.path_transient:
             self.destroy_subscription(self.path_subscription)
             qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL if transient else DurabilityPolicy.VOLATILE)
-            self.path_subscription = self.create_subscription(Path, '/reference_path', self.on_path, qos)
+            self.path_subscription = self.create_subscription(Path, self.reference_topic, self.on_path, qos)
             self.path_transient = transient
 
     def on_path(self, msg):
-        if self.count_publishers('/reference_path') > 1:
+        if self.count_publishers(self.reference_topic) > 1:
             self.pending_path = None
             if self.state in ('RUNNING', 'PAUSED', 'ACQUIRING'):
                 self.generation += 1
@@ -102,12 +107,13 @@ class PathTracker(TaskNode):
             directed_poses([(p.pose.position.x,p.pose.position.y,yaw_of(p.pose.orientation)) for p in msg.poses])
             point_turn_indices([(p.pose.position.x,p.pose.position.y,yaw_of(p.pose.orientation)) for p in msg.poses])
             self.pending_path = msg
+            self.reference_fingerprint = motion_signature([(p.pose.position.x, p.pose.position.y, yaw_of(p.pose.orientation)) for p in msg.poses])
         except ValueError as exc:
             self.pending_path = None
             self.get_logger().warning(str(exc))
 
     def prepare(self):
-        if self.count_publishers('/reference_path') != 1:
+        if self.count_publishers(self.reference_topic) != 1:
             raise ValueError('Require exactly one reference path publisher')
         if self.pending_path is None:
             raise ValueError('No validated path received')
@@ -119,6 +125,8 @@ class PathTracker(TaskNode):
                                   for p in self.pending_path.poses])
         line = Polyline([p[:2] for p in poses],directions,stops)
         p = self.odom.pose.pose.position
+        if self.following and math.dist((p.x, p.y), line.points[0]) > self.get_parameter('start_tolerance').value:
+            raise ValueError('请先用手柄将车辆移至示教起点附近，再释放手柄并开始路径跟随')
         if math.hypot(p.x, p.y) > self.frame.max_radius:
             raise ValueError('Robot outside configured local operating radius')
         self.controller = CoverageController(line, (p.x, p.y),
@@ -127,6 +135,7 @@ class PathTracker(TaskNode):
             'lookahead', 'speed', 'max_angular', 'completion_tolerance', 'search_window',
             'alignment_tolerance', 'alignment_hold_time', 'alignment_max_angular', 'alignment_timeout')})
         self.trajectory.poses = []
+        self.lateral_error, self.heading_error = None, None
         self.last_plot = -math.inf
         self.track_pub.publish(self.trajectory)
         folder = self.get_parameter('trajectory_directory').value
@@ -144,7 +153,7 @@ class PathTracker(TaskNode):
                         approach_start={'x': p.x, 'y': p.y})
                 self.record_file, self.record_writer = open_recording(folder, 'track', self.frame, points,
                     ['stamp', 'x', 'y', 'yaw', 'cross_track', 'heading_error', 'progress', 'direction'],
-                    task_type='coverage_tracking',
+                    task_type='taught_path_tracking' if self.following else 'coverage_tracking',
                     allow_reverse=self.get_parameter('allow_reverse').value,
                     segment_directions=directions,
                     point_turn_indices=stops,
@@ -152,7 +161,7 @@ class PathTracker(TaskNode):
                 self.alignment_file, self.alignment_writer = open_recording(
                     folder, 'alignment', self.frame, points,
                     ['stamp', 'x', 'y', 'yaw', 'target_yaw', 'heading_error', 'progress'],
-                    task_type='coverage_alignment',
+                    task_type='taught_path_alignment' if self.following else 'coverage_alignment',
                     alignment_parameters={name: self.get_parameter(name).value for name in (
                         'alignment_tolerance', 'alignment_hold_time', 'alignment_max_angular', 'alignment_timeout')})
             except (ValueError, OSError):
@@ -201,6 +210,7 @@ class PathTracker(TaskNode):
             # never the remaining distance to a distant coverage start.
             error.vector.x, error.vector.y, error.vector.z = distance, heading, self.controller.progress
             self.error_pub.publish(error)
+            self.lateral_error, self.heading_error = lateral, heading
             if not self.trajectory.poses or self.trajectory.poses[-1].header.stamp != self.odom.header.stamp:
                 stamped = PoseStamped()
                 stamped.header.stamp, stamped.header.frame_id = self.odom.header.stamp, 'map'
@@ -240,10 +250,14 @@ class PathTracker(TaskNode):
         elif self.state == 'PAUSED' and self.controller is not None:
             # Safety still requires live deviation feedback while holding ownership.
             pose = self.odom.pose.pose
-            distance, _, _ = self.controller.error(pose.position.x, pose.position.y)
+            distance, self.lateral_error, tangent = self.controller.error(pose.position.x, pose.position.y)
+            self.heading_error = math.atan2(math.sin(tangent-yaw_of(pose.orientation)),
+                                           math.cos(tangent-yaw_of(pose.orientation)))
             error = Vector3Stamped()
             error.header.frame_id, error.header.stamp = 'map', self.get_clock().now().to_msg()
             error.vector.x = distance
+            error.vector.y = self.heading_error
+            error.vector.z = self.controller.progress
             self.error_pub.publish(error)
         self.publish_status()
 
@@ -252,6 +266,8 @@ class PathTracker(TaskNode):
         # A state-only first message must not masquerade as completed approach.
         controller = self.controller
         super().publish_status(
+            lateral_error=self.lateral_error, heading_error=self.heading_error,
+            reference_fingerprint=self.reference_fingerprint if self.pending_path else None,
             phase=controller.phase if controller else 'IDLE',
             alignment_error=controller.alignment_error if controller and controller.phase == 'ALIGNING' else None,
             alignment_next_phase=controller.alignment_next_phase if controller and controller.phase == 'ALIGNING' else None,
@@ -265,3 +281,7 @@ class PathTracker(TaskNode):
 
 def main(args=None):
     run(PathTracker, args)
+
+
+def following_main(args=None):
+    run(lambda: PathTracker(following=True), args)

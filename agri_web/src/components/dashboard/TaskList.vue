@@ -7,7 +7,8 @@ const { devices, isFresh, safetyFresh } = useRealtime()
 const rows = computed(() => {
   const entries: [string, string, TaskSnapshot | undefined][] = [
     ['waypoint', '多目标点导航', devices.value?.waypoint],
-    ['tracking', 'Pure Pursuit 跟踪', devices.value?.tracking],
+    ['tracking', '全覆盖路径跟踪', devices.value?.tracking],
+    ['following', '示教路径跟随', devices.value?.following],
     ['planning', '全覆盖路径规划', devices.value?.planning],
   ]
   return entries.map(([key, name, task]) => {
@@ -16,7 +17,7 @@ const rows = computed(() => {
     if (fresh && task && key === 'waypoint' && task.count) {
       progress = task.state === 'COMPLETED' ? '全部目标点已完成'
         : `目标 ${Math.min((task.index ?? 0) + 1, task.count)} / ${task.count}`
-    } else if (fresh && task && key === 'tracking' && task.length) {
+    } else if (fresh && task && ['tracking','following'].includes(key) && task.length) {
       progress = `${numberText(task.progress, 1)} / ${numberText(task.length, 1)} m`
     }
     return { key, name, state: fresh ? taskText(task?.state) : '节点未更新',

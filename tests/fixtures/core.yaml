@@ -20,6 +20,6 @@ safety:
 path_tracker:
   ros__parameters:
     speed: 0.3
-    max_angular: 1.2
+    max_angular: 1.0
     lookahead: 0.3
     completion_tolerance: 0.08

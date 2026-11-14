@@ -15,7 +15,7 @@ def phase_intervals(directory, mode, origin):
     path = directory / 'telemetry/status.jsonl'
     if origin is None or not path.exists():
         return []
-    topic = '/tracking/status' if mode == 'coverage' else '/waypoint/status'
+    topic = {'coverage':'/tracking/status','following':'/following/status','waypoint':'/waypoint/status'}[mode]
     rows = []
     for line in path.read_text().splitlines():
         try:

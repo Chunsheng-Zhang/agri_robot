@@ -72,7 +72,7 @@ class DeviceCache:
         with self.lock:
             items = copy.deepcopy(self.values)
         result = {}
-        for name in ('safety', 'obstacles', 'manual', 'camera', 'waypoint', 'tracking', 'planning', 'gnss', 'mgx23', 'origin', 'voltage', 'scan'):
+        for name in ('safety', 'obstacles', 'manual', 'camera', 'waypoint', 'tracking', 'following', 'planning', 'gnss', 'mgx23', 'origin', 'voltage', 'scan'):
             value, received = items.get(name, ({}, -math.inf))
             age = now - received
             fresh = age < (0.5 if name == 'gnss' else 3.0 if name == 'voltage' else 1.0)
@@ -111,7 +111,7 @@ def install_ros_devices(node):
         ('safety', '/safety/status', True), ('obstacles', '/safety/obstacles', False),
         ('manual', '/manual/status', False), ('camera', '/camera/status', True),
         ('waypoint', '/waypoint/status', True), ('tracking', '/tracking/status', True),
-        ('planning', '/planning/status', True),
+        ('planning', '/planning/status', True), ('following', '/following/status', True),
     ):
         node.create_subscription(String, topic,
             lambda msg, key=name: device_cache.update_json(key, msg.data), latched if durable else 1)
@@ -152,7 +152,7 @@ def install_ros_devices(node):
     node.device_service_clients = {'/safety/emergency_stop': node.create_client(SetBool, '/safety/emergency_stop'),
                                     '/safety/lidar_protection': node.create_client(SetBool, '/safety/lidar_protection'),
                                     '/safety/obstacle/reset': node.create_client(Trigger, '/safety/obstacle/reset')}
-    for source in ('waypoint', 'tracking'):
+    for source in ('waypoint', 'tracking', 'following'):
         for action in ('start', 'pause', 'resume', 'cancel'):
             name = f'/{source}/{action}'
             node.device_service_clients[name] = node.create_client(Trigger, name)
@@ -220,7 +220,9 @@ def install_routes(app, require_bridge):
 
     @router.post('/api/tasks/{source}/{action}')
     def task(source: str, action: str):
-        if source not in ('waypoint', 'tracking') or action not in ('start', 'pause', 'resume', 'cancel'):
+        if (source not in ('waypoint', 'tracking', 'following')
+                or action not in ('start', 'pause', 'resume', 'cancel')
+                or source == 'following' and action == 'start'):
             raise HTTPException(404, 'Unknown task operation')
         result = service_call(require_bridge().node, f'/{source}/{action}')
         if hasattr(app.state, 'workspace'):

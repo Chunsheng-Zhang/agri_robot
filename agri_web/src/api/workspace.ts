@@ -1,7 +1,8 @@
 import { apiRequest, apiUrl } from './http'
 import type { PathPoint, ReferencePathResponse } from './robot'
 
-export type WorkMode = 'base' | 'waypoint' | 'coverage'
+export const workModes = ['base', 'waypoint', 'coverage', 'following'] as const
+export type WorkMode = typeof workModes[number]
 export type MissionMode = 'waypoint' | 'coverage'
 export interface GeoPoint { longitude: number; latitude: number; dwell_time: number }
 export interface Projection { epsg: number; latitude: number; longitude: number }
@@ -25,7 +26,7 @@ export interface SavedPlanPath extends ReferencePathResponse {
   run: Run; projection: Projection; preview: Preview
 }
 export interface Run {
-  id: string; mission_id: string; mission_revision: number; name: string; mode: MissionMode
+  id: string; mission_id: string; mission_revision: number; name: string; mode: MissionMode | 'following'
   stage: string; state: string; reason: string; created_at: string; updated_at: string
   coverage_quality_version?: number
   coverage_quality?: CoverageQuality | null
@@ -101,13 +102,17 @@ export interface CoverageQuality {
   actual?: CoverageEstimate | null
 }
 export interface WorkspaceContext {
+  teaching?: {state:string; reason:string; id:string|null; samples:number}
   synthetic?: boolean
   mode: WorkMode | null; origin: Projection; origin_source: string; config_file: string
   missions: MissionDocument[]; runs: Run[]; active_run: Run | null
   defaults: Record<MissionMode, Record<string, number | string | boolean>>
   events: { time?: string; stamp?: number; event: string; reason?: string; mode?: string; channel: string; mission_id?: string }[]
 }
-export const modeLabels: Record<WorkMode, string> = { base: '基础待命', waypoint: '多点导航', coverage: '全覆盖作业' }
+export const modeLabels: Record<WorkMode, string> = { base: '基础待命', waypoint: '多点导航', coverage: '全覆盖规划与跟踪', following: '路径跟随' }
+export function workModeText(mode?: string | null): string {
+  return workModes.includes(mode as WorkMode) ? modeLabels[mode as WorkMode] : '运行模式未更新'
+}
 export const request = <T>(path: string, data?: unknown, method = 'POST') => apiRequest<T>(path, {
   method, headers: { 'Content-Type': 'application/json' }, ...(data === undefined ? {} : { body: JSON.stringify(data) }),
 })
@@ -122,7 +127,7 @@ export const getSavedPlanPath = (id: string, plan: string) => apiRequest<SavedPl
 export const loadSavedPlan = (id: string, plan: string) => request(`/api/missions/${id}/plans/${plan}/load`)
 export const savePlannedPath = (id: string, plan: string) => request<{ success: boolean; already_saved: boolean; run: Run }>(`/api/missions/${id}/plans/${plan}/save`)
 export const optimizationReportUrl = (id: string) => apiUrl(`/api/runs/${id}/optimization`)
-export const taskAction = (source: 'waypoint' | 'tracking', action: 'pause' | 'resume' | 'cancel') => request(`/api/tasks/${source}/${action}`)
+export const taskAction = (source: 'waypoint' | 'tracking' | 'following', action: 'pause' | 'resume' | 'cancel') => request(`/api/tasks/${source}/${action}`)
 export const cancelPlanning = () => request('/api/planning/cancel')
 export const resetObstacle = () => request('/api/robot/obstacle-stop/reset')
 export const setLidarProtection = (enabled: boolean) => request<{ success: boolean; enabled: boolean; message: string }>(

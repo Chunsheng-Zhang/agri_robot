@@ -104,8 +104,8 @@ def analyze_run(directory):
             notes.append(f'{phase}: non-increasing ROS timestamps; time-based comparisons need review.')
         phase_rows[phase], sources[phase] = rows, str(file.relative_to(directory))
     reference = []
-    if run['mode'] == 'coverage':
-        paths = sorted((directory / 'paths').glob('coverage_*.json'))
+    if run['mode'] in ('coverage','following'):
+        paths = sorted((directory / 'paths').glob('following_*.json' if run['mode']=='following' else 'coverage_*.json'))
         if len(paths) != 1:
             raise ValueError('Coverage report requires exactly one saved reference path')
         document = json.loads(paths[0].read_text())
@@ -123,7 +123,7 @@ def analyze_run(directory):
         notes.append('Waypoint distance is distance to the active target, not lateral path-tracking error.')
     if not all(math.isfinite(x+y) for x,y in reference):
         raise ValueError('Nonfinite reference path')
-    primary = 'tracking' if run['mode'] == 'coverage' else 'waypoint'
+    primary = 'tracking' if run['mode'] in ('coverage','following') else 'waypoint'
     main_rows = phase_rows.get(primary, [])
     t0 = main_rows[0]['stamp'] if main_rows else min(
         (r[0]['stamp'] for r in phase_rows.values() if r), default=None)
@@ -145,9 +145,10 @@ def analyze_run(directory):
             'linear_x_m_s': statistics([number(r['linear_x']) for r in selected]),
             'angular_z_rad_s': statistics([number(r['angular_z']) for r in selected])}
     counts = capture.get('samples_by_topic', {})
+    control_source = {'coverage':'tracking','waypoint':'waypoint','following':'following'}[run['mode']]
     expected = ['/mgx23/raw', '/mgx23/position', '/mgx23/attitude_stamped', '/mgx23/velocity_stamped',
                 '/mgx23/status', '/mgx23/accuracy', '/odom', '/cmd_vel', '/base/driver_cmd_vel',
-                '/vel_raw', f'/control/{"tracking" if run["mode"] == "coverage" else "waypoint"}/cmd_vel']
+                '/vel_raw', f'/control/{control_source}/cmd_vel']
     missing = [topic for topic in expected if not counts.get(topic)]
     if missing:
         notes.append('Missing recorded topics: ' + ', '.join(missing))

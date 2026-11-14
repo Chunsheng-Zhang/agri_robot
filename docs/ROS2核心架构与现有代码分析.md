@@ -4,7 +4,7 @@
 
 后续已接入 Jetson 手柄、4ROS 与 Astra Pro Plus，补充了人工控制、雷达锁定停车和真实安全状态 API。以下为首版核心设计；当前设备启动、安全策略和新增接口以 [设备接入说明](手柄雷达相机接入说明.md) 为准。雷达障碍停车现默认关闭，支持通过 Web 复选框启用。
 
-2026-10-29 新增 Web 任务与模式切换，最新操作见 [迁移与操作说明](Web任务操作与旧GUI功能迁移.md)。六个功能模块保留，新增 CMake 接口包 `agri_interfaces`，提供带模式版本/任务代号的 `AcquireControl.srv`。统一启动默认常驻两类控制器与覆盖规划，`mode` 是初始选择；safety 提供三个模式 Trigger 服务并在切换时撤权停车，拒绝旧模式请求和旧任务释放。全局原点、定位安装参数和硬件安全参数保持启动配置只读。
+2026-10-29 新增 Web 任务与模式切换，最新操作见 [迁移与操作说明](Web任务操作与旧GUI功能迁移.md)。六个功能模块保留，新增 CMake 接口包 `agri_interfaces`，提供带模式版本/任务代号的 `AcquireControl.srv`。统一启动默认常驻多点、覆盖跟踪、示教跟随三类控制器与覆盖规划，`mode` 是初始选择；safety 提供四种模式 Trigger 服务（base/waypoint/coverage/following）并在切换时撤权停车，拒绝旧模式请求和旧任务释放。全局原点、定位安装参数和硬件安全参数保持启动配置只读。
 
 任务配置和运行记录由 FastAPI 保存为文件，模式、开始/暂停/恢复/取消与参数应用均通过 ROS 服务，不从 Web 启动原厂进程或直接控制串口。任务参数仅在待命时通过标准原子参数服务应用；最小转弯半径变化通过原有 lifecycle manager 重配规划服务器，使参数真实生效。覆盖路径成功发布与开始跟踪是独立操作。
 
@@ -186,7 +186,7 @@ Action goal 设置 Cartesian、frame `map`、CONSTANT 地头、SET_ANGLE 条带�
 | --- | --- | --- |
 | `/waypoint/start,pause,resume,cancel` | `std_srvs/Trigger` | 重新读取 YAML 开始；暂停、继续、取消；完整状态在 Topic |
 | `/tracking/start,pause,resume,cancel` | `std_srvs/Trigger` | 使用最近有效参考路径开始；不自动抢占或替换运行中路径 |
-| `/system/mode/base,waypoint,coverage` | `std_srvs/Trigger` | 切换选择模式，撤销旧控制权并停车，新模式不自动运行 |
+| `/system/mode/base,waypoint,coverage,following` | `std_srvs/Trigger` | 切换选择模式，撤销旧控制权并停车，新模式不自动运行 |
 | `/safety/acquire_control` | `agri_interfaces/srv/AcquireControl` | 自主/Web 控制权使用模式版本和任务代号校验，拒绝延迟旧请求/释放 |
 | `/safety/waypoint/enable`、`/safety/tracking/enable` | `std_srvs/SetBool` | 保留兼容接口；新任务节点使用带版本的统一控制权服务 |
 | `/safety/emergency_stop` | `std_srvs/SetBool` | true 锁定急停；false 要求按钮松开、唯一图输出及所需手柄在线回中，保持无任务 |
@@ -201,7 +201,7 @@ Action goal 设置 Cartesian、frame `map`、CONSTANT 地头、SET_ANGLE 条带�
 
 ## 9. 启动、部署与后续范围
 
-具体操作见 `ROS2核心使用说明.md`。新 launch 支持 base/waypoint/coverage 初始模式、是否启动 MGX23，以及 none/yahboom_x3/external 底盘；默认 none，且启动时软件急停锁定。两类控制器和规划默认常驻，外部路径实验可用 start_planner:=false 关闭规划模块。模块各自也可单独调试，但不与统一核心中的同名实例重复启动，且须加载同一参数文件。
+具体操作见 `ROS2核心使用说明.md`。新 launch 支持 base/waypoint/coverage/following 初始模式、是否启动 MGX23，以及 none/yahboom_x3/external 底盘；默认 none，且启动时软件急停锁定。三类任务控制器和规划默认常驻，外部路径实验可用 start_planner:=false 关闭规划模块。模块各自也可单独调试，但不与统一核心中的同名实例重复启动，且须加载同一参数文件。
 
 Jetson 使用同一源码，在 Ubuntu 22.04 / Humble / Python 3.10 的 aarch64 环境本机构建上游 C++ 库，不能复制 x86 install 中的二进制。先检查原厂 `Rosmaster_Lib`、pyserial、串口权限和设备路径，再以原始 X3 可执行文件验证硬件。systemd 模板只提供 base/none，不会安装、启用服务或自动开始任务。ROS_DOMAIN_ID、网卡和 ROS_LOCALHOST_ONLY 按真实网络环境设置。
 

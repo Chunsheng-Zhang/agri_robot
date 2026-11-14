@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { resetObstacle, setLidarProtection } from '../../api/workspace'
+import { workModeText } from '../../api/workspace'
 import { useRealtime, modeText, numberText } from '../../composables/useRealtime'
 
 const { devices, safetyFresh, isFresh, error, refresh } = useRealtime()
@@ -33,7 +34,8 @@ watch(() => safety.value?.lidar_required, value => {
 }, { immediate: true })
 const obstacles = computed(() => isFresh(devices.value?.obstacles) && devices.value?.obstacles.valid ? devices.value.obstacles : null)
 const cards = computed(() => [
-  { label: '当前控制模式', text: safety.value ? modeText(safety.value.owner) : '未知', bad: !safety.value },
+  { label: '运行模式', text: safety.value ? workModeText(safety.value.mode) : '未更新', bad: !safety.value },
+  { label: '当前控制权', text: safety.value ? modeText(safety.value.owner) : '未知', bad: !safety.value },
   { label: '手柄安全通道', text: safety.value ? (safety.value.joy_connected ? '在线' : '未连接') : '未知', bad: !safety.value?.joy_connected },
   { label: '雷达障碍停车', text: typeof safety.value?.lidar_required === 'boolean' ? (safety.value.lidar_required === false ? '已关闭' : safety.value.lidar_connected ? '已启用' : '已启用 / 等待有效雷达') : '未知', bad: !safety.value || (safety.value.lidar_required !== false && !safety.value.lidar_connected) },
   { label: '定位状态', text: safety.value ? (safety.value.localization_valid ? '有效' : '无效 / 超时') : '未知', bad: !safety.value?.localization_valid },

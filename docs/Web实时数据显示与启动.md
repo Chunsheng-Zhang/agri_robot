@@ -2,7 +2,7 @@
 
 Jetson 日常使用可直接执行 `bash /home/jetson/agri_robot/scripts/project.bash start`，统一后台启动核心、后端和网页。`status` 查看状态，`stop` 停止本脚本启动的服务。固定配置、日志和进程管理说明见 [项目一键启动](项目一键启动.md)；下方保留分终端启动方式，勿与一键入口重复运行。
 
-代码位置：前端 `agri_web/src/views/`，后端 `agri_backend/main.py`、`devices.py`、`workspace.py`。现已提供总览、任务管理、路径规划、作业监控、设备与运行记录页面，只有多机器人协同仍为预留页。完整操作见 [Web 任务操作与旧 GUI 功能迁移](Web任务操作与旧GUI功能迁移.md)。网页查询、模式切换和规划不会自动开始导航任务。
+代码位置：前端 `agri_web/src/views/`，后端 `agri_backend/main.py`、`devices.py`、`workspace.py`。现已提供总览、任务管理、路径规划、作业监控、设备与运行记录页面，新增路径跟随与手柄示教，只有多机器人协同仍为预留页。四模式语义见[四种运行模式与切换](四种运行模式与切换.md)。完整操作见 [Web 任务操作与旧 GUI 功能迁移](Web任务操作与旧GUI功能迁移.md)。网页查询、模式切换和规划不会自动开始导航任务。
 
 ## 1. 页面现在显示什么
 
@@ -11,9 +11,9 @@ Jetson 日常使用可直接执行 `bash /home/jetson/agri_robot/scripts/project
 | 经纬度 | `/mgx23/position` | 显示真实经纬度，定位原始消息过期后显示 `--` |
 | 平面位置、航向、观测速度和角速度 | `/odom` | 位置为 map/odom 重合的米制坐标；ROS 航向为东 0°、逆时针正，区别于 MGX23 原始航向 |
 | 路径和位置图 | `/reference_path`、`/tracked_path`、`/waypoint/targets`、`/waypoint/trajectory`、`/odom` | 绿色参考路径、橙色实际轨迹、航点与蓝色当前位置；支持缩放平移，统一 map 坐标系 |
-| 控制模式、定位有效性、手柄/雷达、急停及障碍锁定 | `/safety/status` | 安全状态过期显示未知；解除急停按钮禁用 |
+| 运行模式、当前控制权、定位有效性、手柄/雷达、急停及障碍锁定 | `/safety/status` | 安全状态过期显示未知；解除急停按钮禁用 |
 | 全局/前方/后方最近障碍距离 | `/safety/obstacles` | 仅显示新鲜且有效的测量，实际停车判定仍在 ROS 安全模块 |
-| 多点、跟踪和规划任务 | `/waypoint/status`、`/tracking/status`、`/planning/status` | 显示实际状态、已有任务进度和控制权；未启动模块显示节点未更新 |
+| 多点、跟踪和规划任务 | `/waypoint/status`、`/tracking/status`、`/following/status`、`/planning/status` | 显示实际状态、已有任务进度和控制权；未启动模块显示节点未更新 |
 | 相机状态/画面 | `/camera/status`、原始图像及 `web_video_server` | 图像接收状态与视频 HTTP 连接分别判断，断流显示提示 |
 | 电池电压、雷达扫描 | `/voltage`、`/scan` | 显示实际电压和有效扫描点；不推算电量百分比 |
 
@@ -40,7 +40,7 @@ bash scripts/start_core.bash mode:=base chassis:=none \
 
 启动前须已构建本项目 ROS overlay，并配置现场固定原点与设备端口。原始驱动继续复用 Yahboom 工作区。若已有相机/雷达/手柄进程，只启动所需的监控或缺少的设备，不能启动两个相同驱动。`start_video:=true` 还要求原始 `web_video_server` 及依赖可执行；仓库内 ARM 设备程序不能在 x86 电脑直接运行。
 
-`mode:=base` 是初始模式，两类控制器与规划模块默认常驻待命。之后在网页顶部切换三个模式，不重启定位或设备；明确“开始”才申请运动控制权。`start_planner:=false` 仅用于外部 CSV 路径等独立跟踪实验，此时网页覆盖规划接口不可用，不另开重复跟踪节点。
+`mode:=base` 是初始模式，三类任务控制器（多点、覆盖跟踪、示教跟随）与规划模块默认常驻待命。之后在网页模式栏切换四种模式（基础待命、多点导航、全覆盖规划与跟踪、路径跟随），不重启定位或设备；明确“开始”才申请运动控制权。`start_planner:=false` 仅用于外部 CSV 路径等独立跟踪实验，此时网页覆盖规划接口不可用，不另开重复跟踪节点。
 
 ### 终端二：FastAPI 后端
 

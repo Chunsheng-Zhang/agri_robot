@@ -9,7 +9,8 @@ import { useCoverageLayers } from '../../composables/useCoverageLayers'
 
 const { robot, devices, safetyFresh, poseFresh } = useRealtime()
 const props = withDefaults(defineProps<{ preview?: Preview | null; showLivePath?: boolean;
-  coverageMode?: boolean; coverageRun?: Run | null; savedReference?: ReferencePathResponse | null }>(), { showLivePath: true, coverageMode: false })
+  pathSource?: 'tracking' | 'following' | 'waypoint';
+  coverageMode?: boolean; coverageRun?: Run | null; savedReference?: ReferencePathResponse | null }>(), { showLivePath: true, coverageMode: false, pathSource: 'tracking' })
 const source = ref<CoverageMapSource>('actual')
 const layers = reactive({ inset: true, completed: true, reference: true, remaining: true, overlap: true, forbidden: true })
 const coverage = useCoverageLayers(() => props.coverageMode && (props.showLivePath || props.savedReference) ? props.coverageRun : null, () => source.value)
@@ -47,6 +48,7 @@ function pointerMove(event: PointerEvent) {
 }
 let timer: ReturnType<typeof setInterval> | undefined
 let disposed = false
+let pathGeneration = 0
 function validatedPath(path: ReferencePathResponse) {
   if (path.points.length && path.frame_id !== 'map') throw new Error('路径坐标系不是 map，无法叠加')
   if (!path.points.every(point => Number.isFinite(point.x) && Number.isFinite(point.y))) throw new Error('路径含无效坐标')
@@ -56,11 +58,17 @@ async function refreshPath() {
   if (!props.showLivePath) { referencePath.value = []; trackedPath.value = []; return }
   if (pathLoading.value) return
   pathLoading.value = true
+  const generation = pathGeneration
   const empty: ReferencePathResponse = { count: 0, points: [], frame_id: 'map' }
-  const results = await Promise.allSettled([getReferencePath(),
-    props.coverageMode ? Promise.resolve(empty) : getTrackedPath(),
-    props.coverageMode ? Promise.resolve(empty) : getWaypoints()])
+  const results = await Promise.allSettled([getReferencePath(props.pathSource),
+    props.coverageMode ? Promise.resolve(empty) : getTrackedPath(props.pathSource),
+    props.coverageMode || props.pathSource === 'following' ? Promise.resolve(empty) : getWaypoints()])
   if (disposed) return
+  if (generation !== pathGeneration) {
+    pathLoading.value = false
+    if (props.showLivePath) void refreshPath()
+    return
+  }
   const errors: string[] = []
   for (const [index, result] of results.entries()) {
     let points: PathPoint[] = []
@@ -81,7 +89,11 @@ async function refreshPath() {
   pathUpdatedAt.value = errors.length ? '' : new Date().toLocaleTimeString()
   pathLoading.value = false
 }
-watch(() => props.showLivePath, value => { if (value) void refreshPath() })
+watch(() => [props.showLivePath, props.pathSource], () => {
+  pathGeneration++
+  referencePath.value = []; trackedPath.value = []; liveTargets.value = []; referenceFingerprint.value = null
+  if (props.showLivePath) void refreshPath()
+})
 const position = computed(() => {
   if (!poseFresh.value || !robot.value || robot.value.position_x === null || robot.value.position_y === null) return null
   return { x: robot.value.position_x, y: robot.value.position_y }

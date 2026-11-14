@@ -35,7 +35,7 @@ def geometry(reference):
 def task_statuses(directory, mode):
     path=directory/'telemetry/status.jsonl'
     if not path.exists():return {'available':False,'reason':'无任务状态记录'}
-    topic='/tracking/status' if mode=='coverage' else '/waypoint/status'
+    topic={'coverage':'/tracking/status','following':'/following/status','waypoint':'/waypoint/status'}[mode]
     rows=[];malformed=0
     for line in path.read_text().splitlines():
         try:
@@ -104,7 +104,7 @@ def tracking_assessment(directory, mission, run, reference, phases, motion, mgx,
         return any(0<=j<len(track_stamps) and abs(stamp-track_stamps[j])<=.25 for j in (index-1,index))
     commands=[]
     for row in motion:
-        if row['topic']!='/control/tracking/cmd_vel':continue
+        if row['topic']!=('/control/following/cmd_vel' if run['mode']=='following' else '/control/tracking/cmd_vel'):continue
         stamp=numeric(row.get('source_stamp_ns'))
         stamp=stamp/1e9 if stamp is not None else None
         v,w,lateral=numeric(row.get('linear_x')),numeric(row.get('angular_z')),numeric(row.get('linear_y'))

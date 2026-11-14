@@ -29,7 +29,8 @@ function fixture(kind) {
       cancelPlanning: async () => { calls.push(['cancel_plan']) },
       selectMode: async mode => { calls.push(['mode', mode]) },
       deleteRun: async id => { calls.push(['delete', id]); return { success: true, data_preserved: true } },
-      modeLabels: { base: '基础待命', waypoint: '多点导航', coverage: '全覆盖作业' },
+      modeLabels: { base: '基础待命', waypoint: '多点导航', coverage: '全覆盖规划与跟踪', following: '路径跟随' },
+      workModes: ['base','waypoint','coverage','following'], workModeText: mode => mode,
     },
   }
   for (const name of ['useRealtime', 'useWorkspace']) modules[`../composables/${name}`] = modules[`../../composables/${name}`]

@@ -50,11 +50,11 @@ bash scripts/start_core.bash mode:=base chassis:=none \
 
 示例不连接底盘。实车按现场验证选择 `chassis:=yahboom_x3`，端口、固定原点、安装参数和安全限速仍按统一 YAML 设置。硬件驱动在 Jetson 上运行，不由网页另开一份。只查看软件时不要照搬启动不存在的设备开关。
 
-启动参数 `mode:=base/waypoint/coverage` 现在表示**初始选择模式**。定位、安全、两类控制器及规划模块默认常驻，初始软件急停仍锁定；在对应任务栏目点击上方模式按钮切换，不需要重启设备。
+启动参数 `mode:=base/waypoint/coverage/following` 现在表示**初始选择模式**。定位、安全、多点/覆盖/示教跟随三类控制器及规划模块默认常驻，初始软件急停仍锁定；在对应任务栏目点击上方模式按钮切换，不需要重启设备。
 
 切换会先撤销原控制权并输出停车指令，旧自主任务取消，进行中的规划取消并清除旧参考。新模式保持待命，不能自动恢复旧任务。同一模式按钮不会重复开始任务；人工停止仍使用任务取消、遥控释放或急停按钮。
 
-ROS 模式服务为 `/system/mode/base`、`/system/mode/waypoint`、`/system/mode/coverage`（`std_srvs/Trigger`）。当前模式及版本从 `/safety/status` 反馈。自主控制权改用 `/safety/acquire_control`（`agri_interfaces/srv/AcquireControl`），带模式版本和任务代号；旧请求和旧释放指令不能作用于新控制权。原 SetBool 接口保留用于原厂手柄与既有明确人工操作。
+ROS 模式服务为 `/system/mode/base`、`/system/mode/waypoint`、`/system/mode/coverage`、`/system/mode/following`（`std_srvs/Trigger`）。当前模式及版本从 `/safety/status` 反馈。自主控制权改用 `/safety/acquire_control`（`agri_interfaces/srv/AcquireControl`），带模式版本和任务代号；旧请求和旧释放指令不能作用于新控制权。原 SetBool 接口保留用于原厂手柄与既有明确人工操作。
 
 若核心使用了自定义 `params_file`，启动后端前设置 `AGRI_SYSTEM_CONFIG` 为同一配置文件的绝对路径。Web 使用 ROS 发布的实际固定原点校验任务，配置文件用于初始默认参数和离线编辑；不提供原点修改入口。
 

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Cpu, Odometer, Compass, Lightning, Location } from '@element-plus/icons-vue'
+import { workModeText } from '../../api/workspace'
 import { useRealtime, modeText, numberText } from '../../composables/useRealtime'
 
 const { robot: state, devices, poseFresh, velocityFresh, robotFresh, safetyFresh, isFresh, refresh } = useRealtime()
@@ -33,7 +34,8 @@ const robot = computed(() => {
   return {
     name: state.value?.robot_id ?? '农业机器人',
     online: poseFresh.value,
-    mode: safetyFresh.value ? modeText(devices.value?.safety.owner) : '控制模式未知',
+    mode: safetyFresh.value ? workModeText(devices.value?.safety.mode) : '运行模式未更新',
+    owner: safetyFresh.value ? modeText(devices.value?.safety.owner) : '控制权未更新',
     speed: velocityFresh.value ? state.value?.speed : null,
     heading: pose?.heading,
     battery: robotFresh.value ? state.value?.battery : null,
@@ -99,6 +101,8 @@ defineExpose({ refreshData: refresh })
           {{ robot.mode }}
         </div>
       </div>
+
+      <div class="status-item"><div class="status-label">当前控制权</div><div class="status-value">{{ robot.owner }}</div></div>
 
       <div class="status-item">
         <div class="status-label">

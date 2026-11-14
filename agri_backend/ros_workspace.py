@@ -7,6 +7,7 @@ from time import monotonic, time
 from fastapi import HTTPException
 
 from .devices import device_cache
+from agri_base.modes import WORK_MODES
 
 
 def wait_result(future, timeout=2):
@@ -32,11 +33,11 @@ class RosWorkspace:
         self.recorder = ExperimentRecorder(node)
         self.types = {'trigger': Trigger, 'get': GetParameters,
                       'set': SetParametersAtomically, 'lifecycle': ManageLifecycleNodes, 'lease': AcquireControl}
-        for mode in ('base', 'waypoint', 'coverage'):
+        for mode in WORK_MODES:
             self.add(f'/system/mode/{mode}', 'trigger')
         for action in ('plan', 'cancel', 'optimize', 'load'):
             self.add(f'/planning/{action}', 'trigger')
-        for name in ('waypoint', 'path_tracker', 'coverage_adapter', 'coverage_server'):
+        for name in ('waypoint', 'path_tracker', 'path_follower', 'coverage_adapter', 'coverage_server'):
             self.add(f'/{name}/get_parameters', 'get')
             self.add(f'/{name}/set_parameters_atomically', 'set')
         self.add('/coverage_lifecycle_manager/manage_nodes', 'lifecycle')

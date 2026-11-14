@@ -1,4 +1,5 @@
 import { apiRequest } from './http'
+import type { WorkMode } from './workspace'
 
 export interface PathPoint {
   x: number
@@ -33,6 +34,7 @@ export interface RobotStatusResponse {
   commanded_speed: number | null
   commanded_angular_speed: number | null
   control_mode: string | null
+  work_mode?: WorkMode | null
   ros_connected: boolean
   ros_error: string | null
   odom_age_seconds: number | null
@@ -55,7 +57,7 @@ export interface Snapshot {
 }
 
 export interface SafetySnapshot extends Snapshot {
-  mode?: 'base' | 'waypoint' | 'coverage'
+  mode?: WorkMode
   mode_revision?: number
   limits?: { linear: number; angular: number; path_error: number }
   owner?: string | null
@@ -115,6 +117,7 @@ export interface DevicesResponse {
   camera: Snapshot & { connected?: boolean; topic?: string; width?: number; height?: number; encoding?: string; reason?: string }
   waypoint: TaskSnapshot
   tracking: TaskSnapshot
+  following: TaskSnapshot
   planning: TaskSnapshot
   gnss: Snapshot & { latitude?: number; longitude?: number; fix_status?: number }
   mgx23?: Snapshot & {
@@ -131,12 +134,14 @@ export function getRobotStatus(): Promise<RobotStatusResponse> {
   return apiRequest<RobotStatusResponse>('/api/robot/status')
 }
 
-export function getReferencePath(): Promise<ReferencePathResponse> {
+export function getReferencePath(source: 'tracking' | 'following' | 'waypoint' = 'tracking'): Promise<ReferencePathResponse> {
+  if (source === 'following') return apiRequest('/api/following/path/reference')
+  if (source === 'waypoint') return Promise.resolve({ count:0,points:[],frame_id:'map' })
   return apiRequest<ReferencePathResponse>('/api/robot/path/reference')
 }
 
-export function getTrackedPath(): Promise<ReferencePathResponse> {
-  return apiRequest('/api/robot/path/tracked')
+export function getTrackedPath(source: 'tracking' | 'following' | 'waypoint' = 'tracking'): Promise<ReferencePathResponse> {
+  return apiRequest(source === 'following' ? '/api/following/path/tracked' : `/api/robot/path/tracked?source=${source}`)
 }
 
 export function getWaypoints(): Promise<ReferencePathResponse> {

@@ -61,8 +61,8 @@ const displayRun = computed(() => savedReference.value?.run || (showLive.value ?
 const displayPreview = computed(() => savedReference.value?.preview || preview.value)
 const executingThis = computed(() => active.value?.mission_id === id.value && ['PLANNING', 'ACQUIRING', 'RUNNING', 'PAUSED'].includes(active.value?.state || ''))
 const controlsIdle = computed(() => safetyFresh.value && !devices.value?.safety.owner &&
-  !['waypoint', 'tracking', 'planning'].some(key => {
-    const status = devices.value?.[key as 'waypoint' | 'tracking' | 'planning']
+  !['waypoint', 'tracking', 'following', 'planning'].some(key => {
+    const status = devices.value?.[key as 'waypoint' | 'tracking' | 'following' | 'planning']
     return isFresh(status) && ['PLANNING', 'ACQUIRING', 'RUNNING', 'PAUSED'].includes(status?.state || '')
   }))
 

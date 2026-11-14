@@ -1,6 +1,7 @@
 """ROS-independent exclusive command gate; all clocks supplied by caller."""
 
 import math
+from agri_base.modes import COMMAND_SOURCES
 
 
 class CommandGate:
@@ -34,7 +35,7 @@ class CommandGate:
         return True
 
     def enable(self, source, active, healthy, now, stamp):
-        if source not in ('waypoint', 'tracking', 'manual', 'web'):
+        if source not in COMMAND_SOURCES:
             return False
         if not active:
             if self.owner and self.owner != source:
@@ -69,7 +70,7 @@ class CommandGate:
             self.revoke('Localization invalid, stale, or conflicting publishers')
         if self.emergency_stop or not self.owner:
             return 0.0, 0.0
-        if self.owner == 'tracking':
+        if self.owner in ('tracking', 'following'):
             if self.error is not None and abs(self.error) > self.max_path_error:
                 self.revoke('Path deviation exceeded')
                 return 0.0, 0.0

@@ -9,13 +9,14 @@ from launch.actions import DeclareLaunchArgument, OpaqueFunction, IncludeLaunchD
 from launch.launch_description_sources import AnyLaunchDescriptionSource, PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node, SetParameter
+from agri_base.modes import WORK_MODES
 
 
 def nodes(context):
     value = lambda name: LaunchConfiguration(name).perform(context)
     mode, chassis = value('mode'), value('chassis')
-    if mode not in ('base', 'waypoint', 'coverage'):
-        raise ValueError('mode must be base, waypoint or coverage')
+    if mode not in WORK_MODES:
+        raise ValueError('mode must be base, waypoint, coverage or following')
     if chassis not in ('none', 'yahboom_x3', 'external'):
         raise ValueError('chassis must be none, yahboom_x3 or external')
     params = value('params_file')
@@ -105,6 +106,8 @@ def nodes(context):
                        parameters=[params, {'waypoints_file': value('waypoints_file'),
                                             'trajectory_directory': value('trajectory_directory')}], output='screen'))
     result.append(Node(package='agri_path_tracking', executable='path_tracker',
+                       parameters=[params, {'trajectory_directory': value('trajectory_directory')}], output='screen'))
+    result.append(Node(package='agri_path_tracking', executable='path_follower',
                        parameters=[params, {'trajectory_directory': value('trajectory_directory')}], output='screen'))
     if enabled('start_planner'):
         result += [

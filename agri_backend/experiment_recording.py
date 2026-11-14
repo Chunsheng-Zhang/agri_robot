@@ -232,7 +232,7 @@ class ExperimentRecorder:
             self.subscriptions.append(node.create_subscription(cls, topic, callback, qos))
         for topic in ('/cmd_vel', '/base/driver_cmd_vel', '/vel_raw'):
             sub(Twist, topic, lambda msg, t=topic: self.on_motion(t, msg), qos_profile_sensor_data)
-        for topic in ('/control/waypoint/cmd_vel', '/control/tracking/cmd_vel'):
+        for topic in ('/control/waypoint/cmd_vel', '/control/tracking/cmd_vel', '/control/following/cmd_vel'):
             sub(TwistStamped, topic, lambda msg, t=topic: self.on_motion(t, msg), qos_profile_sensor_data)
         sub(String, '/mgx23/raw', self.on_raw)
         sub(NavSatFix, '/mgx23/position', self.on_position, qos_profile_sensor_data)
@@ -243,7 +243,7 @@ class ExperimentRecorder:
         sub(Odometry, '/odom', self.on_odom, qos_profile_sensor_data)
         for cls, topic in ((LaserScan, '/scan'), (Joy, '/joy')):
             sub(cls, topic, lambda msg, t=topic: self.put('timing', t, self.receipt()+[self.stamp(msg)]), qos_profile_sensor_data)
-        for topic in ('/tracking/status', '/waypoint/status', '/safety/status', '/safety/events'):
+        for topic in ('/tracking/status', '/following/status', '/waypoint/status', '/safety/status', '/safety/events'):
             sub(String, topic, lambda msg, t=topic: self.on_status(t, msg))
         self.timer = node.create_timer(0.1, self.tick)
 

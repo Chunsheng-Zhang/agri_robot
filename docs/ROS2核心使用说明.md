@@ -34,6 +34,7 @@ bash scripts/start_core.bash mode:=base chassis:=none
 ros2 service call /system/mode/base std_srvs/srv/Trigger '{}'
 ros2 service call /system/mode/waypoint std_srvs/srv/Trigger '{}'
 ros2 service call /system/mode/coverage std_srvs/srv/Trigger '{}'
+ros2 service call /system/mode/following std_srvs/srv/Trigger '{}'
 ```
 
 独立 CSV→Path 跟踪实验用 `mode:=coverage start_planner:=false`，保留一个跟踪器、一个外部参考路径发布者。跟踪器兼容原 CSV 的 volatile 周期发布和 OpenNav 的持久化发布，拒绝多个参考路径发布者。此选项关闭覆盖规划接口，正常 Web 作业保持 `start_planner:=true` 默认值。

@@ -196,6 +196,13 @@ def test_services_safety_and_closed_loop(tmp_path, approach_offset):
         assert [(p['x'], p['y']) for p in metadata['reference_path']['points']] == expected
         with files[-1].open() as stream:
             rows = list(csv.DictReader(stream))
+        # Alignment has its own recording and must not be counted as tracking.
+        alignment_file = sorted(tmp_path.glob('alignment_*.csv'))[-1]
+        alignment_meta = json.loads(alignment_file.with_suffix('.json').read_text())
+        assert alignment_meta['task_type'] == 'coverage_alignment'
+        with alignment_file.open() as stream:
+            alignment_rows = list(csv.DictReader(stream))
+        combined = rows + alignment_rows
         if approach_offset:
             approach_file = tmp_path / metadata['approach_csv']
             approach_meta = json.loads(approach_file.with_suffix('.json').read_text())
@@ -206,14 +213,14 @@ def test_services_safety_and_closed_loop(tmp_path, approach_offset):
             assert approach_rows and rows
             assert float(approach_rows[-1]['distance']) <= .15
             assert float(rows[0]['x']) >= expected[0][0] - .15
-            assert len(rows) + len(approach_rows) == len(tracker.trajectory.poses)
+            combined += approach_rows
             assert all(float(row['progress']) >= 0 for row in rows)
-        else:
-            assert len(rows) == len(tracker.trajectory.poses)
-            for row, recorded in zip(rows, tracker.trajectory.poses):
-                assert float(row['x']) == recorded.pose.position.x
-                assert float(row['y']) == recorded.pose.position.y
-                assert recorded.header.frame_id == 'map'
+        combined.sort(key=lambda row: float(row['stamp']))
+        assert len(combined) == len(tracker.trajectory.poses)
+        for row, recorded in zip(combined, tracker.trajectory.poses):
+            assert float(row['x']) == recorded.pose.position.x
+            assert float(row['y']) == recorded.pose.position.y
+            assert recorded.header.frame_id == 'map'
 
         # Localization watchdog revokes ownership and does not restart on recovery.
         assert service(Trigger, '/system/mode/waypoint').success

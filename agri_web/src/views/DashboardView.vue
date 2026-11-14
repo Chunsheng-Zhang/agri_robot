@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { Refresh } from '@element-plus/icons-vue'
 
+import ModeSelector from '../components/ModeSelector.vue'
 import WelcomeBanner from '../components/dashboard/WelcomeBanner.vue'
 import StatisticsCards from '../components/dashboard/StatisticsCards.vue'
 import RobotStatus from '../components/dashboard/RobotStatus.vue'
@@ -48,13 +49,14 @@ async function refreshDashboard() {
       </el-button>
     </div>
 
+    <ModeSelector />
     <WelcomeBanner />
 
     <StatisticsCards />
 
     <SafetyStatus />
 
-    <div class="quick-actions"><router-link to="/tasks">多点导航配置与执行 →</router-link><router-link to="/planning">全覆盖规划与跟踪 →</router-link><router-link to="/monitor">实时监控与人工遥控 →</router-link></div>
+    <div class="quick-actions"><router-link to="/tasks">多点导航配置与执行 →</router-link><router-link to="/planning">全覆盖规划与跟踪 →</router-link><router-link to="/following">路径跟随与手柄示教 →</router-link><router-link to="/monitor">实时监控与人工遥控 →</router-link></div>
 
     <div class="dashboard-grid">
       <div class="dashboard-left">

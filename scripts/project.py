@@ -17,7 +17,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 ROOT = Path(__file__).resolve().parents[1]
 HARDWARE = {'Mcnamu_driver_X3', 'yahboom_driver_monitor', 'joy_node', 'ydlidar_ros2_driver_node',
             'astra_camera_node', 'web_video_server', 'localization', 'safety',
-            'chassis_adapter', 'joy_adapter', 'waypoint', 'path_tracker', 'coverage_adapter',
+            'chassis_adapter', 'joy_adapter', 'waypoint', 'path_tracker', 'path_follower', 'coverage_adapter',
             'coverage_server'}
 
 

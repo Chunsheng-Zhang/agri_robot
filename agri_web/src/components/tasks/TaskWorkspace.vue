@@ -45,7 +45,7 @@ function pathSaved(missionId: string, planId: string) {
   <div class="task-workspace">
     <div class="page-title"><div><h1>{{ title }}</h1><p>{{ kind === 'waypoint' ? '在此完成航点编辑、导航参数设置与任务执行。' : '在此完成农田边界编辑、覆盖路径生成与路径跟踪。' }}</p></div><el-button :loading="loading" @click="refresh">刷新任务</el-button></div>
     <div class="workflow"><span v-for="(step, index) in workflow" :key="step"><b>{{ index + 1 }}</b>{{ step }}</span></div>
-    <ModeSelector :modes="['base', kind]" />
+    <ModeSelector />
     <TaskControls :kind="kind" />
     <el-alert v-if="error" :title="error" type="warning" :closable="false" />
     <div v-if="context" class="workspace-grid">

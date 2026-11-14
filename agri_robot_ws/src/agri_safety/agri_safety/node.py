@@ -16,6 +16,7 @@ from std_msgs.msg import Bool, Float32, String
 from std_srvs.srv import SetBool, Trigger
 
 from agri_base.coordinates import finite_positive
+from agri_base.modes import WORK_MODES, COMMAND_SOURCES, AUTONOMOUS_SOURCES, source_allowed
 from agri_base.runtime import LATCHED, fresh_stamp, run, stamp_seconds, yaw_of
 from .gate import CommandGate
 from .obstacles import ScanGeometry, ObstacleLatch
@@ -27,7 +28,7 @@ class Safety(Node):
         super().__init__('safety')
         self.declare_parameter('initial_mode', 'base', ParameterDescriptor(read_only=True))
         self.system_mode = self.get_parameter('initial_mode').value
-        if self.system_mode not in ('base', 'waypoint', 'coverage'):
+        if self.system_mode not in WORK_MODES:
             raise ValueError('Invalid initial system mode')
         self.mode_revision = 0
         self.control_lease = None
@@ -90,15 +91,17 @@ class Safety(Node):
         self.create_subscription(Joy, '/joy', self.on_joy, qos_profile_sensor_data)
         self.create_subscription(String, '/manual/status', self.on_manual, 1)
         self.create_subscription(LaserScan, '/scan', self.on_scan, qos_profile_sensor_data)
-        self.create_subscription(Vector3Stamped, '/tracking/error', self.on_error, 1)
+        for source in ('tracking', 'following'):
+            self.create_subscription(Vector3Stamped, f'/{source}/error',
+                lambda msg, s=source: self.on_error(msg, s), 1)
         self.create_service(SetBool, '/safety/emergency_stop', self.stop_service)
         self.create_service(Trigger, '/safety/obstacle/reset', self.reset_obstacle)
         self.create_service(SetBool, '/safety/lidar_protection', self.set_lidar_protection)
         self.create_service(AcquireControl, '/safety/acquire_control', self.acquire_control)
-        for mode in ('base', 'waypoint', 'coverage'):
+        for mode in WORK_MODES:
             self.create_service(Trigger, f'/system/mode/{mode}',
                                 lambda req, res, selected=mode: self.select_mode(selected, res))
-        for source in ('waypoint', 'tracking', 'manual', 'web'):
+        for source in COMMAND_SOURCES:
             self.create_subscription(TwistStamped, f'/control/{source}/cmd_vel',
                                      lambda msg, s=source: self.on_command(s, msg), 1)
             self.create_service(SetBool, f'/safety/{source}/enable',
@@ -219,8 +222,8 @@ class Safety(Node):
                           stamp_seconds(msg.header.stamp), lateral=t.linear.y)
         self.tick()
 
-    def on_error(self, msg):
-        if (self.gate.owner == 'tracking' and msg.header.frame_id == 'map'
+    def on_error(self, msg, source='tracking'):
+        if (self.gate.owner == source and msg.header.frame_id == 'map'
                 and fresh_stamp(self, msg.header.stamp, self.gate.command_timeout)
                 and stamp_seconds(msg.header.stamp) >= self.gate.granted_stamp
                 and math.isfinite(msg.vector.x)):
@@ -276,6 +279,9 @@ class Safety(Node):
         return response
 
     def select_mode(self, mode, response):
+        if mode not in WORK_MODES:
+            response.success, response.message = False, 'Unknown work mode'
+            return response
         if mode != self.system_mode:
             self.gate.revoke('Work mode changed; explicit start required')
             self.control_lease = None
@@ -302,8 +308,7 @@ class Safety(Node):
         return response
 
     def enable(self, source, request, response):
-        allowed = source == 'manual' or (source == 'web' and self.system_mode == 'base') or self.system_mode == {
-            'waypoint': 'waypoint', 'tracking': 'coverage'}.get(source)
+        allowed = source_allowed(self.system_mode, source)
         if request.data and not allowed:
             response.success, response.message = False, 'Select the matching work mode first'
             return response
@@ -311,7 +316,7 @@ class Safety(Node):
         can_move = (health and not self.obstacle.active and (not self.lidar_required or self.lidar_ok()))
         if source == 'manual' and request.data:
             can_move = can_move and self.joy_neutral and not self.joy_pressed
-            if can_move and not self.gate.emergency_stop and self.gate.owner in ('waypoint', 'tracking', 'web'):
+            if can_move and not self.gate.emergency_stop and self.gate.owner in (*AUTONOMOUS_SOURCES, 'web'):
                 self.event('MANUAL_TAKEOVER', self.gate.owner)
                 self.gate.revoke('Explicit manual takeover')
         response.success = self.gate.enable(source, request.data, can_move, monotonic(),

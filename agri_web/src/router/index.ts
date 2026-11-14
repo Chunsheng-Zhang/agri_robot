@@ -34,6 +34,12 @@ const router = createRouter({
           meta: { title: '全覆盖规划与跟踪' },
         },
         {
+          path: 'following',
+          name: 'following',
+          component: () => import('../views/FollowingView.vue'),
+          meta: { title: '路径跟随' },
+        },
+        {
           path: 'devices',
           name: 'devices',
           component: () => import('../views/DevicesView.vue'),

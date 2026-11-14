@@ -299,6 +299,8 @@ if ROS_AVAILABLE:
             except ImportError:
                 from agri_backend.ros_workspace import RosWorkspace
             self.workspace_ros = RosWorkspace(self)
+            from agri_backend.following import following_manager
+            following_manager.install_ros(self)
 
             self.get_logger().info(
                 "农业机器人 ROS 2 桥接节点已启动"
@@ -324,6 +326,8 @@ if ROS_AVAILABLE:
 
         def destroy_node(self):
             if hasattr(self, 'workspace_ros'):
+                from agri_backend.following import following_manager
+                following_manager.close()
                 self.workspace_ros.recorder.close()
             return super().destroy_node()
 
@@ -810,6 +814,22 @@ def get_robot_status():
     # 14.4 返回机器人状态
     # --------------------------------------------------------
 
+    work_mode = devices['safety'].get('mode') if devices['safety']['fresh'] else None
+    from agri_base.modes import MODE_SOURCE
+    task_source = MODE_SOURCE.get(work_mode)
+    task = devices.get(task_source, {})
+    reference_count, tracked_count = data['reference_path_points'], data['tracked_path_points']
+    if work_mode == 'following':
+        from agri_backend.following import following_manager
+        reference_count, tracked_count = following_manager.path_counts()
+    elif work_mode == 'waypoint':
+        reference_count = len(data['waypoint_path'])
+        tracked_count = tracked_count if data['tracked_source'] == 'waypoint' else 0
+    elif work_mode == 'coverage':
+        tracked_count = tracked_count if data['tracked_source'] == 'tracking' else 0
+    else:
+        reference_count = tracked_count = 0
+
     return {
         # 原有前端字段
         "robot_id": ROBOT_ID,
@@ -818,7 +838,8 @@ def get_robot_status():
         "map_position": geographic_pose(data, devices['origin'].get('projection'))
             if data_age is not None and 0 <= data_age < 1.0 and devices['origin']['fresh'] else None,
         "control_mode": devices["safety"].get("owner"),
-        "task_state": devices.get(devices["safety"].get("owner"), {}).get("state"),
+        "work_mode": work_mode,
+        "task_state": task.get('state') if task.get('fresh') else None,
         "safety": devices["safety"],
         "online": online,
         "mode": mode,
@@ -856,12 +877,8 @@ def get_robot_status():
         ),
 
         # 路径状态
-        "reference_path_points": (
-            data["reference_path_points"]
-        ),
-        "tracked_path_points": (
-            data["tracked_path_points"]
-        ),
+        "reference_path_points": reference_count,
+        "tracked_path_points": tracked_count,
 
         # 里程计数据年龄，单位：秒
         "odom_age_seconds": (
@@ -893,8 +910,12 @@ def get_reference_path():
 
 
 @app.get('/api/robot/path/tracked')
-def get_tracked_path():
+def get_tracked_path(source: str | None = None):
     data = robot_state.snapshot()
+    if source is not None and source not in ('waypoint','tracking'):
+        raise HTTPException(422, 'Unknown trajectory source')
+    if source and data['tracked_source'] != source:
+        return {'count':0, 'points':[], 'frame_id':'map'}
     return {'count': len(data['tracked_path']), 'points': data['tracked_path'],
             'frame_id': data['tracked_frame']}
 
@@ -1073,6 +1094,8 @@ except ImportError:
     sys.path.insert(0, str(FilePath(__file__).resolve().parent.parent))
     from agri_backend.workspace import install_routes as install_workspace_routes
 install_workspace_routes(app, require_ros_bridge, robot_state.snapshot)
+from agri_backend.following import install_routes as install_following_routes
+install_following_routes(app, require_ros_bridge)
 
 from agri_backend.experiment_communication import CommunicationMiddleware
 
