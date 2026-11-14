@@ -24,7 +24,7 @@ from opennav_coverage_msgs.msg import Coordinate, Coordinates
 
 from agri_base.coordinates import frame_from_node, finite_positive
 from agri_base.runtime import LATCHED, run, yaw_of
-from .field import load_field, validate_path
+from .field import load_field, validate_path, validate_native_work_area
 from .contour import plan_contour
 from .optimizer import optimize as optimize_path
 from .saved_path import read_saved_path
@@ -224,6 +224,10 @@ class CoverageAdapter(Node):
                         timeout=self.get_parameter('planning_timeout').value)
                 response.success, response.message = True, 'PLANNING; inspect /planning/status'
                 return response
+            # Invalidate the preceding preview even if the new geometry is
+            # rejected before sending an action to OpenNav.
+            empty = Path(); empty.header.frame_id = 'map'; self.path_pub.publish(empty)
+            validate_native_work_area(self.polygon, self.get_parameter('headland_width').value)
             goal = ComputeCoveragePath.Goal()
             goal.frame_id = 'map'
             goal.generate_decomp = self.get_parameter('generate_decomp').value
@@ -248,10 +252,6 @@ class CoverageAdapter(Node):
             token = self.token
             self.state, self.reason = 'PLANNING', ''
             self.deadline = monotonic() + self.get_parameter('planning_timeout').value
-            # Invalidate a previous idle reference until this request succeeds.
-            empty = Path()
-            empty.header.frame_id = 'map'
-            self.path_pub.publish(empty)
             future = self.client.send_goal_async(goal)
             future.add_done_callback(lambda f: self.on_goal(f, token))
             response.success, response.message = True, 'PLANNING; inspect /planning/status'

@@ -1,6 +1,7 @@
 """Boundary I/O and geometric validation, not a coverage planner."""
 
 import json
+import math
 from pathlib import Path
 
 import yaml
@@ -47,3 +48,22 @@ def validate_path(points, polygon, robot_width):
         outside = line.difference(clearance)
         raise ValueError('Planned path crosses field boundary/hole or lacks footprint clearance: '
                          f'outside_length={outside.length:.3f}m, outside_bounds={outside.bounds}')
+
+
+def validate_native_work_area(polygon, headland_width):
+    """The current native single-field API takes only buffer geometry zero.
+
+    Reject split work areas instead of silently dropping every other polygon.
+    This is an interface completeness check, not a minimum coverage constraint
+    or proof that the robot cannot travel between the work areas.
+    """
+    if not math.isfinite(headland_width) or headland_width < 0:
+        raise ValueError('地头预留宽度必须是有限非负数')
+    working = polygon.buffer(-headland_width) if headland_width else polygon
+    if working.is_empty:
+        raise ValueError('地头内缩后没有可用作业区域，请减小地头预留宽度')
+    if working.geom_type != 'Polygon':
+        count = len(getattr(working, 'geoms', []))
+        raise ValueError(f'地头内缩后分裂为 {count} 个作业区域；当前普通条带接口不能完整保留多个分区，'
+                         '已拒绝仅规划其中一块。请减小人工地头宽度或使用一键优化规划')
+    return working
