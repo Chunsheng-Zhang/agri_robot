@@ -89,6 +89,7 @@ test('monitor map selects following topics and discards late paths after switchi
     },
     '../../composables/useRealtime':{useRealtime:()=>({robot:vue.ref(null),devices:vue.ref(null),safetyFresh:vue.ref(false),poseFresh:vue.ref(false)})},
     '../../composables/useCoverageLayers':{useCoverageLayers:()=>({snapshot:vue.ref(null),raster:vue.ref(null)})},
+    './pathSequence':{sequenceBands:()=>[]},
   }
   const {descriptor}=parse(fs.readFileSync(path.join(root,'agri_web/src/components/dashboard/FieldMap.vue'),'utf8'))
   const scope=vue.effectScope()

@@ -68,7 +68,8 @@ test('SVG picking converts screen coordinates through zoom/pan back to local map
   const scope=vue.effectScope(),cleanup=[],emitted=[]
   const modules={vue:{...vue,useId:()=> 'entry-test',onMounted:()=>{},onUnmounted:f=>cleanup.push(f)},'@element-plus/icons-vue':{},
     '../../composables/useRealtime':{useRealtime:()=>({robot:vue.ref(null),devices:vue.ref(null),safetyFresh:vue.ref(false),poseFresh:vue.ref(false)})},
-    '../../composables/useCoverageLayers':{useCoverageLayers:()=>({snapshot:vue.ref(null),raster:vue.ref(null)})},'../../api/robot':{}}
+    '../../composables/useCoverageLayers':{useCoverageLayers:()=>({snapshot:vue.ref(null),raster:vue.ref(null)})},'../../api/robot':{},
+    './pathSequence':{sequenceBands:()=>[]}}
   const state=scope.run(()=>new Function('require','exports','defineProps','withDefaults','defineEmits','defineExpose',
     compile('components/dashboard/FieldMap.vue',['transform','pointerDown','pointerMove','pointerUp']))(n=>modules[n],{},()=>props,p=>p,()=> (...args)=>emitted.push(args),()=>{}))
   try{

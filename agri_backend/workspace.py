@@ -527,8 +527,10 @@ def install_routes(app, require_bridge, robot_snapshot):
             if run.get('planning_strategy')=='SMART':
                 from .optimization_results import summary
                 small['optimization']=summary(workspace.store.run_path(plan_id))
+            from .coverage_path_order import path_display
             return {'run':small,'preview':original['preview'],'count':len(points),'frame_id':'map','projection':run['projection'],
-                    'fingerprint':fingerprint,'points':[{'x':x,'y':y} for x,y,_ in points]}
+                    'fingerprint':fingerprint,'points':[{'x':x,'y':y} for x,y,_ in points],
+                    'path_order':path_display(data)}
         except FileNotFoundError as exc:raise HTTPException(404,'已保存路径不存在') from exc
         except (ValueError,OSError,KeyError,TypeError) as exc:raise HTTPException(409,str(exc)) from exc
 

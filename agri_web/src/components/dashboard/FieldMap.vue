@@ -6,6 +6,7 @@ import type { PathPoint, ReferencePathResponse } from '../../api/robot'
 import type { CoverageMapSource, Preview, Run, EntryPlan } from '../../api/workspace'
 import { useRealtime } from '../../composables/useRealtime'
 import { useCoverageLayers } from '../../composables/useCoverageLayers'
+import { sequenceBands } from './pathSequence'
 
 const { robot, devices, safetyFresh, poseFresh } = useRealtime()
 const props = withDefaults(defineProps<{ preview?: Preview | null; showLivePath?: boolean;
@@ -18,6 +19,7 @@ let selectingEntry=false
 let frozenProjection:((p:PathPoint)=>PathPoint)|null=null
 const source = ref<CoverageMapSource>('actual')
 const layers = reactive({ inset: true, completed: true, reference: true, remaining: true, overlap: true, forbidden: true })
+const showRowOrder = ref(true), showRetraced = ref(true)
 const coverage = useCoverageLayers(() => props.coverageMode && (props.showLivePath || props.savedReference) ? props.coverageRun : null, () => source.value)
 watch(() => props.savedReference, value => { if (value) source.value = 'planned' }, { immediate: true })
 const coverageData = coverage.snapshot
@@ -107,7 +109,9 @@ async function refreshPath() {
       errors.push(error instanceof Error ? error.message : '路径连接失败')
     }
     if (index === 0) {
-      referencePath.value = points
+      // A stable fingerprint keeps compact display geometry cached during polling.
+      if (!points.length || result.status !== 'fulfilled' || !result.value.fingerprint
+        || result.value.fingerprint !== referenceFingerprint.value) referencePath.value = points
       referenceFingerprint.value = result.status === 'fulfilled' ? result.value.fingerprint || null : null
     }
     else if (index === 1) trackedPath.value = points
@@ -138,6 +142,8 @@ const displayTracks = computed(() => !props.showLivePath && !props.savedReferenc
 const rings = computed(() => props.preview?.rings || coverageData.value?.field_rings || [])
 const inset = computed(() => (props.showLivePath || props.savedReference) && coverageData.value?.inset_polygons
   ? coverageData.value.inset_polygons : props.preview?.inset_polygons || [])
+let previousBounds: number[] = []
+let previousTransform: ((p: PathPoint) => PathPoint) | null = null
 const transform = computed(() => {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
   for (const group of [displayReference.value, displayTracks.value.flat(),
@@ -148,10 +154,14 @@ const transform = computed(() => {
     }
   }
   if (!Number.isFinite(minX)) return null
+  const bounds = [minX, maxX, minY, maxY]
+  if (previousTransform && bounds.every((v, i) => v === previousBounds[i])) return previousTransform
   const spanX = Math.max(maxX - minX, 1), spanY = Math.max(maxY - minY, 1)
   const scale = Math.min((width - padding * 2) / spanX, (height - padding * 2) / spanY)
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
-  return (p: PathPoint) => ({ x: width / 2 + (p.x - cx) * scale, y: height / 2 - (p.y - cy) * scale })
+  previousBounds = bounds
+  previousTransform = (p: PathPoint) => ({ x: width / 2 + (p.x - cx) * scale, y: height / 2 - (p.y - cy) * scale })
+  return previousTransform
 })
 function polyline(points: readonly PathPoint[]) {
   if (!transform.value) return ''
@@ -167,6 +177,29 @@ function polygonPath(polygon: readonly (readonly PathPoint[])[]) {
   }).join(' ') + ' Z').join(' ')
 }
 const referenceLine = computed(() => polyline(displayReference.value))
+const sequence = computed(() => props.coverageMode ? sequenceBands(displayReference.value) : [])
+const referenceBands = computed(() => sequence.value.map(band => ({ color: band.color, points: polyline(band.points) })))
+const pathOrder = computed(() => {
+  if (!props.coverageMode || !displayReference.value.length) return null
+  if (props.savedReference?.fingerprint) return props.savedReference.path_order || null
+  const snapshot = coverageData.value
+  return snapshot?.reference_fingerprint && snapshot.reference_fingerprint === referenceFingerprint.value
+    && snapshot.reference_fingerprint === props.coverageRun?.reference_fingerprint ? snapshot.path_order || null : null
+})
+const workRows = computed(() => {
+  const value = pathOrder.value
+  return value?.state === 'READY' && Array.isArray(value.rows) && value.rows.length <= 1500 && value.rows.every((row, i) =>
+    row.visit === i + 1 && [row.start.x, row.start.y, row.end.x, row.end.y].every(Number.isFinite)) ? value.rows : []
+})
+const rowLabels = computed(() => {
+  if (!transform.value) return []
+  const step = Math.max(1, Math.ceil(workRows.value.length / (50 * zoom.value)))
+  return workRows.value.filter((_, i) => i % step === 0 || i === workRows.value.length - 1).map(row => ({
+    visit: row.visit, ...transform.value!({ x: (row.start.x + row.end.x) / 2, y: (row.start.y + row.end.y) / 2 }),
+  }))
+})
+const retracedLines = computed(() => pathOrder.value?.retracing_state === 'READY'
+  ? (pathOrder.value.retraced_lines || []).filter(line => line.every(p => Number.isFinite(p.x) && Number.isFinite(p.y))).map(polyline) : [])
 const entryMarker=computed(()=>{
   const point=entryDrag.value||props.entryPoint
   return point&&transform.value?transform.value(point):null
@@ -224,6 +257,8 @@ defineExpose({ refreshPath })
       <el-checkbox v-model="layers.remaining"><i class="swatch remaining" />{{ source === 'actual' ? '未完成区域' : '预测漏覆盖区域' }}</el-checkbox>
       <el-checkbox v-model="layers.overlap"><i class="swatch overlap" />{{ source === 'actual' ? '重复覆盖区域' : '预测重复覆盖区域' }}</el-checkbox>
       <el-checkbox v-model="layers.forbidden"><i class="swatch forbidden" />禁入区域</el-checkbox>
+      <el-checkbox v-model="showRowOrder" :disabled="!workRows.length">作业行访问序号</el-checkbox>
+      <el-checkbox v-model="showRetraced"><i class="swatch retraced" />重走路径</el-checkbox>
     </div>
     <el-alert v-if="coverageMode && coverage.error.value" :title="coverage.error.value" type="warning" :closable="false" />
     <div class="path-canvas">
@@ -243,8 +278,19 @@ defineExpose({ refreshPath })
         </g>
         <template v-if="!coverageMode || layers.forbidden"><path v-for="(shape, index) in forbiddenPaths" :key="`hole-${index}`" :d="shape" :fill="`url(#${forbiddenId})`" stroke="#6e7c88" stroke-width="1.5" data-layer="forbidden" /></template>
         <template v-if="coverageMode && layers.inset"><path v-for="(shape, index) in insetPaths" :key="`inset-${index}`" :d="shape" fill="none" fill-rule="evenodd" stroke="#8b5cc4" stroke-dasharray="7 4" stroke-width="2" data-layer="inset" /></template>
-        <polyline :points="!coverageMode || layers.reference ? referenceLine : ''" fill="none" :stroke="coverageMode ? '#1c71d8' : '#25845c'" stroke-width="3" stroke-linejoin="round" data-layer="reference" />
+        <g v-if="coverageMode && layers.reference" data-layer="reference-sequence">
+          <polyline v-for="(band, index) in referenceBands" :key="`sequence-${index}`" :points="band.points"
+            fill="none" :stroke="band.color" stroke-width="2.7" stroke-linejoin="round" stroke-linecap="round" data-layer="reference" />
+        </g>
+        <polyline v-else :points="!coverageMode ? referenceLine : ''" fill="none" stroke="#25845c" stroke-width="3" stroke-linejoin="round" data-layer="reference" />
         <polyline v-for="(line, index) in trackedLines" :key="`track-${index}`" :points="line" fill="none" :stroke="coverageMode ? '#445665' : '#e59a36'" stroke-width="2" stroke-linejoin="round" />
+        <g v-if="coverageMode && layers.reference && showRetraced" data-layer="retraced">
+          <polyline v-for="(line, index) in retracedLines" :key="`retraced-${index}`" :points="line" fill="none" stroke="#d52d35" stroke-width="4" stroke-linejoin="round"><title>重复经过的中心线路段</title></polyline>
+        </g>
+        <g v-if="coverageMode && layers.reference && showRowOrder" data-layer="row-order" pointer-events="none">
+          <text v-for="label in rowLabels" :key="label.visit" :x="label.x" :y="label.y" text-anchor="middle" dominant-baseline="central"
+            class="row-visit-label" :font-size="13 / zoom" :stroke-width="3 / zoom"><title>第{{ label.visit }}条访问的作业行</title>{{ label.visit }}</text>
+        </g>
         <g v-if="start && (!coverageMode || layers.reference)">
           <circle :cx="start.x" :cy="start.y" r="6" fill="#25845c" stroke="white" stroke-width="2"><title>路径起点（绿色）</title></circle>
           <text :x="start.x + (start.x > width / 2 ? -10 : 10)" :y="start.y - 10" :text-anchor="start.x > width / 2 ? 'end' : 'start'" class="endpoint-label" fill="#25845c">起点</text>
@@ -275,7 +321,8 @@ defineExpose({ refreshPath })
       <el-button size="small" plain :loading="pathLoading || coverage.loading.value" @click="refreshPath(); coverage.refresh()"><el-icon><Refresh /></el-icon>刷新</el-button>
       <div><el-button size="small" @click="scale(1.4)">放大</el-button><el-button size="small" @click="scale(1 / 1.4)">缩小</el-button><el-button size="small" @click="resetView">复位视图</el-button></div>
     </div>
-    <div class="legend"><span :class="coverageMode ? 'planned' : 'reference'">━ {{ coverageMode ? '规划作业路径' : '参考路径' }}</span><span class="path-start">● 起点（绿色）</span><span class="path-end">● 终点（红色）</span><span class="tracked">━ {{ savedReference ? '本记录实际轨迹' : '最近实际轨迹' }}</span><span class="robot">● 当前位置 / 航向</span></div>
+    <div class="legend"><span v-if="coverageMode" class="sequence-legend">行驶顺序：先 <i class="sequence-ramp" /> 后</span><span v-else class="reference">━ 参考路径</span><span v-if="coverageMode" class="retraced-legend">━ 重走路径（红色）</span><span class="path-start">● 起点（绿色）</span><span class="path-end">● 终点（红色）</span><span class="tracked">━ {{ savedReference ? '本记录实际轨迹' : '最近实际轨迹' }}</span><span class="robot">● 当前位置 / 航向</span></div>
+    <p v-if="coverageMode && displayReference.length" class="hint sequence-hint">路径颜色按行驶先后由紫到黄；红线为同一中心线路段重走，{{ pathOrder?.retracing_state === 'READY' ? '已完成识别。' : pathOrder?.retracing_reason || '重走信息准备中。' }}{{ workRows.length ? `作业行按真实访问顺序从1编号，共${workRows.length}行。` : pathOrder?.reason || '作业行访问信息准备中。' }}{{ rowLabels.length < workRows.length ? '当前视图抽稀显示序号，放大可查看更多。' : '' }}序号不包含换行、绕障连接。</p>
     <p v-if="coverageMode" class="hint">内缩距离 {{ coverageData?.inset_distance_m ?? preview?.inset_distance_m ?? '--' }} m；{{ coverage.imagesLoading.value ? '图层读取中；' : '' }}{{ coverage.stale.value ? '区域快照未及时更新；' : '' }}{{ coverageData?.state === 'PENDING' ? '作业区域准备中；' : '' }}实际区域按本轮正式跟踪轨迹和评价幅宽累计，假设机具开启；接近、对齐和空档不涂为已完成。尚无轨迹时红色表示尚未记录作业。约2秒刷新，结束报告为最终核对口径。</p>
     <p class="hint">路径查询：{{ pathUpdatedAt || '--' }}；{{ poseFresh ? '位姿实时更新' : '位姿过期，当前位置已隐藏' }}。历史轨迹保留用于对照。</p>
   </el-card>
@@ -300,8 +347,12 @@ defineExpose({ refreshPath })
 .layer-switches :deep(.el-checkbox) { margin-right: 0; }
 .swatch { display: inline-block; width: 15px; height: 10px; margin-right: 5px; border-radius: 2px; }
 .swatch.inset { height: 0; border-top: 2px dashed #8b5cc4; }
-.swatch.completed { background: #48a368; }.swatch.reference { height: 0; border-top: 3px solid #1c71d8; }
+.swatch.completed { background: #48a368; }.swatch.reference { height: 3px; background: linear-gradient(90deg,#440154,#21918c,#fde725); }
 .swatch.remaining { background: #dc6262; }.swatch.overlap { background: #ef9d30; }
 .swatch.forbidden { background: repeating-linear-gradient(135deg, #d5dbe0 0 3px, #84919b 3px 4px); }
 .planned { color: #1c71d8; }
+.row-visit-label { fill: #233d30; font-weight: 650; paint-order: stroke; stroke: white; stroke-linejoin: round; }
+.sequence-legend { display: inline-flex; align-items: center; gap: 6px; color: #4d5d55; }
+.sequence-ramp { display: inline-block; width: 100px; height: 7px; border-radius: 3px; background: linear-gradient(90deg,#440154,#443983,#31688e,#21918c,#35b779,#90d743,#fde725); }
+.retraced-legend { color: #d52d35; }.swatch.retraced { height: 0; border-top: 3px solid #d52d35; }
 </style>

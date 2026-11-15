@@ -83,6 +83,8 @@ class MapState:
             'inset_distance_m':headland}
         self.base['field_rings']=[[{'x':x,'y':y} for x,y in ring.coords]
                                   for ring in [field.exterior,*field.interiors]]
+        from .coverage_path_order import path_display
+        self.base['path_order'] = path_display(saved)
 
     def update(self):
         from .coverage_quality import tracking_break

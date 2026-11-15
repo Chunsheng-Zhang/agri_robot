@@ -8,6 +8,7 @@ const vue = dependency('vue'), ts = dependency('typescript')
 const root = path.resolve(__dirname, '..')
 const transpile = source => ts.transpileModule(source, { compilerOptions: {
   module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
+const sequenceModule = new Function('exports', `${transpile(fs.readFileSync(path.join(root,'agri_web/src/components/dashboard/pathSequence.ts'),'utf8'))}; return exports`)({})
 const projection = { epsg: 32650, latitude: 36.64, longitude: 117.02 }
 const run = { id: 'run-a', reference_fingerprint: 'fingerprint-a', projection }
 const ring = [[0,0],[10,0],[10,10],[0,10],[0,0]].map(([x,y]) => ({x,y}))
@@ -85,14 +86,14 @@ function mountMap(extra = {}) {
   const {descriptor}=parse(fs.readFileSync(path.join(root,'agri_web/src/components/dashboard/FieldMap.vue'),'utf8'))
   const snapshot=vue.ref(metadata()),raster=vue.ref({run:run.id,source:'actual',version:'2'.repeat(20),
     extent:[0,0,10,10],images:{completed:'completed.png',remaining:'remaining.png',overlap:'overlap.png'}})
-  const modules={vue,'@element-plus/icons-vue':{MapLocation:{render:()=>null},Refresh:{render:()=>null}},
+  const modules={vue,'./pathSequence':sequenceModule,'@element-plus/icons-vue':{MapLocation:{render:()=>null},Refresh:{render:()=>null}},
     '../../api/robot':{getReferencePath:async()=>({frame_id:'map',points:[{x:0,y:0},{x:10,y:0}],fingerprint:run.reference_fingerprint})},
     '../../composables/useRealtime':{useRealtime:()=>({robot:vue.ref(null),devices:vue.ref(null),safetyFresh:vue.ref(false),poseFresh:vue.ref(false)})},
     '../../composables/useCoverageLayers':{useCoverageLayers:()=>({snapshot,raster,error:vue.ref(''),loading:vue.ref(false),imagesLoading:vue.ref(false),stale:vue.ref(false),refresh(){}})}}
   const exports={};new Function('require','exports',transpile(compileScript(descriptor,{id:'map',inlineTemplate:true}).content))(
     name=>{assert.ok(modules[name],name);return modules[name]},exports)
   const node=(type,text='')=>({type,text,props:{},children:[],parent:null})
-  const renderer=vue.createRenderer({createElement:node,createText:text=>node('#text',text),createComment:text=>node('#comment',text),
+  const renderer=vue.createRenderer({createElement:type=>node(type),createText:text=>node('#text',text),createComment:text=>node('#comment',text),
     setText:(n,text)=>{n.text=text},setElementText:(n,text)=>{n.text=text;n.children=[]},
     patchProp:(n,key,old,value)=>{n.props[key]=value},parentNode:n=>n.parent,
     nextSibling:n=>n.parent?.children[n.parent.children.indexOf(n)+1],
@@ -112,7 +113,7 @@ function mountMap(extra = {}) {
 test('six map layers use one north-up metric transform, clip holes, toggle independently',async()=>{
   const f=mountMap();await flush()
   const buttons=f.all().filter(n=>n.type==='button')
-  assert.equal(buttons.length,6)
+  assert.equal(buttons.length,8)
   assert.ok(buttons.some(n=>f.text(n).includes('已完成作业区域')))
   const image=f.all().find(n=>n.type==='image'&&n.props['data-layer']==='completed')
   assert.equal(image.props.x,210);assert.equal(image.props.y,35)
@@ -154,5 +155,84 @@ test('saved reference is visible with live ROS path queries disabled',async()=>{
   assert.ok(f.all().some(n=>n.type==='text'&&f.text(n)==='起点'))
   assert.ok(f.all().some(n=>n.type==='text'&&f.text(n)==='终点'))
   assert.ok(f.all().some(n=>f.text(n).includes('规划预测')))
+  f.app.unmount()
+})
+
+test('sequence compacts dense straight samples while preserving bends and reversals',()=>{
+  const points=Array.from({length:1001},(_,i)=>({x:i/100,y:0}))
+  points.push({x:10,y:0},{x:10,y:2},{x:0,y:2},{x:4,y:2})
+  const bands=sequenceModule.sequenceBands(points)
+  assert.equal(bands.length,4)
+  assert.deepEqual(bands[0].points,[{x:0,y:0},{x:10,y:0}])
+  assert.deepEqual(bands.at(-1).points,[{x:0,y:2},{x:4,y:2}])
+  assert.equal(bands[0].color,'#440154');assert.equal(bands.at(-1).color,'#fde725')
+  assert.ok(sequenceModule.sequenceBands(Array.from({length:20000},(_,i)=>({x:i/100,y:Math.sin(i/30)}))).length<=96)
+})
+
+const displayOrder={state:'READY',rows:[
+  {visit:1,start:{x:1,y:1},end:{x:9,y:1}},
+  {visit:2,start:{x:9,y:3},end:{x:1,y:3}}],retracing_state:'READY',retraced_lines:[[{x:4,y:1},{x:7,y:1}]]}
+test('real SVG shows traversal colours, real visit numbers and partial retrace in red, independently toggled',async()=>{
+  const reference={frame_id:'map',count:4,fingerprint:'saved-a',points:[{x:1,y:1},{x:9,y:1},{x:9,y:3},{x:1,y:3}],path_order:displayOrder}
+  const before=JSON.stringify(reference)
+  const f=mountMap({showLivePath:false,savedReference:reference});await flush()
+  const bands=f.all().filter(n=>n.props['data-layer']==='reference'&&n.props.points)
+  assert.equal(bands.length,3);assert.equal(new Set(bands.map(n=>n.props.stroke)).size,3)
+  const labels=f.all().find(n=>n.props['data-layer']==='row-order').children.filter(n=>n.type==='text')
+  assert.equal(labels.length,2);assert.ok(f.text(labels[0]).endsWith('1'));assert.ok(f.text(labels[1]).endsWith('2'))
+  assert.equal(labels[0].props.x,400);assert.equal(labels[0].props.y,377)
+  const retrace=f.all().find(n=>n.props['data-layer']==='retraced').children.find(n=>n.type==='polyline')
+  assert.equal(retrace.props.stroke,'#d52d35');assert.equal(retrace.props.points,'362,377 476,377')
+  const buttons=f.all().filter(n=>n.type==='button')
+  buttons.find(n=>f.text(n).includes('作业行访问序号')).props.onClick();await flush()
+  assert.equal(f.all().filter(n=>n.props['data-layer']==='row-order').length,0)
+  assert.ok(f.all().some(n=>n.props['data-layer']==='retraced'))
+  buttons.find(n=>f.text(n).includes('重走路径')).props.onClick();await flush()
+  assert.equal(f.all().filter(n=>n.props['data-layer']==='retraced').length,0)
+  buttons.find(n=>f.text(n).includes('规划作业路径')).props.onClick();await flush()
+  assert.equal(f.all().filter(n=>n.props['data-layer']==='reference-sequence').length,0)
+  assert.equal(JSON.stringify(reference),before)
+  f.app.unmount()
+})
+
+test('another reference fingerprint cannot leave old row labels or red segments on the new path',async()=>{
+  const f=mountMap();f.snapshot.value={...metadata(),path_order:displayOrder};await flush()
+  assert.ok(f.all().find(n=>n.props['data-layer']==='row-order').children.some(n=>n.type==='text'))
+  f.snapshot.value={...metadata(),reference_fingerprint:'different-path',path_order:displayOrder};await flush()
+  assert.equal(f.all().find(n=>n.props['data-layer']==='row-order').children.filter(n=>n.type==='text').length,0)
+  assert.equal(f.all().find(n=>n.props['data-layer']==='retraced').children.filter(n=>n.type==='polyline').length,0)
+  f.app.unmount()
+})
+
+test('legacy path still has order colours, with no invented work-row numbers',async()=>{
+  const f=mountMap({showLivePath:false,savedReference:{frame_id:'map',count:3,fingerprint:'legacy',
+    points:[{x:1,y:1},{x:9,y:1},{x:9,y:3}]}});await flush()
+  assert.equal(f.all().filter(n=>n.props['data-layer']==='reference'&&n.props.points).length,2)
+  assert.equal(f.all().find(n=>n.props['data-layer']==='row-order').children.filter(n=>n.type==='text').length,0)
+  f.app.unmount()
+})
+
+// Optional offline visual proof using the actual component and a frozen field.
+test('optional frozen native route renders the real visit labels and red overlays',async()=>{
+  if(!process.env.AGRI_MAP_SEQUENCE_REFERENCE_FILE)return
+  const saved=JSON.parse(fs.readFileSync(process.env.AGRI_MAP_SEQUENCE_REFERENCE_FILE,'utf8'))
+  const f=mountMap({showLivePath:false,savedReference:saved,preview:saved.preview})
+  f.snapshot.value=null;f.raster.value=null;await flush()
+  assert.equal(f.all().find(n=>n.props['data-layer']==='row-order').children.filter(n=>n.type==='text').length,saved.path_order.rows.length)
+  assert.ok(f.all().find(n=>n.props['data-layer']==='retraced').children.some(n=>n.type==='polyline'))
+  const escape=value=>String(value).replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;')
+  const serialize=n=>{
+    if(n.type==='#text')return escape(n.text)
+    if(n.type==='#comment')return ''
+    const props={...n.props}
+    if(n.type==='svg')Object.assign(props,{xmlns:'http://www.w3.org/2000/svg',width:1200,height:675})
+    const attrs=Object.entries(props).filter(([key,value])=>!key.startsWith('on')&&value!=null).map(([k,v])=>`${k}="${escape(v)}"`).join(' ')
+    return `<${n.type} ${attrs}>${escape(n.text)}${n.children.map(serialize).join('')}</${n.type}>`
+  }
+  const css='.row-visit-label{fill:#233d30;font-weight:650;paint-order:stroke;stroke:white;stroke-linejoin:round}.endpoint-label{font-size:13px;font-weight:600;paint-order:stroke;stroke:white;stroke-width:3px}'
+  const svg=serialize(f.all().find(n=>n.type==='svg')).replace(/(<svg[^>]*>)/,`$1<style>${css}</style>`)
+  const out=path.dirname(process.env.AGRI_MAP_SEQUENCE_REFERENCE_FILE)
+  fs.writeFileSync(path.join(out,'map_sequence.svg'),svg)
+  fs.writeFileSync(path.join(out,'map_sequence.html'),`<!doctype html><html lang="zh"><meta charset="utf-8"><style>body{font:16px sans-serif;background:white;margin:24px}.ramp{display:inline-block;width:160px;height:10px;background:linear-gradient(90deg,#440154,#21918c,#fde725)}</style><h2>覆盖作业地图 · 按行驶顺序着色与编号</h2><p>行驶顺序：先 <span class="ramp"></span> 后　<span style="color:#d52d35">━ 重走路径</span>　● 起点 / 终点旁标文字</p>${svg}<p>离线双孔洞样例；使用真实Vue地图组件绘制。未连接ROS或车辆。</p></html>`)
   f.app.unmount()
 })
