@@ -6,11 +6,21 @@ export interface PathPoint {
   y: number
 }
 
+export interface CoveragePathOrder {
+  state: 'READY' | 'UNAVAILABLE'
+  reason?: string
+  rows: readonly { visit: number; start: PathPoint; end: PathPoint }[]
+  retracing_state?: 'READY' | 'UNAVAILABLE'
+  retraced_lines?: readonly (readonly PathPoint[])[]
+  retracing_reason?: string
+}
+
 export interface ReferencePathResponse {
   count: number
   points: PathPoint[]
   frame_id?: string
   fingerprint?: string | null
+  path_order?: CoveragePathOrder
 }
 
 export interface RobotStatusResponse {

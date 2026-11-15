@@ -1,5 +1,5 @@
 import { apiRequest, apiUrl } from './http'
-import type { PathPoint, ReferencePathResponse } from './robot'
+import type { CoveragePathOrder, PathPoint, ReferencePathResponse } from './robot'
 
 export const workModes = ['base', 'waypoint', 'coverage', 'following'] as const
 export type WorkMode = typeof workModes[number]
@@ -53,8 +53,29 @@ export interface OptimizationCandidate {
   length_m?: number; energy_proxy?: number; score?: number; reason?: string; executable?: boolean
   working_length_m?: number; entry_length_m?: number
   motion?: {forward_m:number;reverse_m:number;turning_m:number;switches:number;energy_proxy:number}
-  headland_search_phase?: 'COARSE' | 'REFINE'
+  headland_search_phase?: 'COARSE' | 'REFINE' | 'NATIVE_LAYOUTS'
   order?: string; swath_count?: number; point_turn_count?: number
+  layout_id?: number; basis?: PlanningBasis
+  start?: {x:number;y:number}; end?: {x:number;y:number}
+  objective_terms?: Record<string,number>; weighted_terms?: Record<string,number>
+  cell_count?: number; cell_reentries?: number; swath_length_m?: number; transition_length_m?: number
+  decomposition?: string; connection_policy?: string
+  routing?: string; continuous_cells_required?: boolean
+  native_seed?: string
+  layout_family?: 'EDGE_GLOBAL' | 'NATIVE_WHOLE_FIELD' | 'NATIVE_PER_CELL'
+  direction_mode?: 'GLOBAL' | 'PER_CELL'
+  split_angle_rad?: number | null; swath_objective?: string; guided_local_search?: boolean
+  cell_directions?: readonly {cell_id:number;angle_rad:number;swath_count:number;swath_length_m:number}[]
+  row_layout?: {policy:string; nominal_spacing_m:number; implement_width_m:number;
+    target_edge_offset_m:number; scan_level_count:number; last_side_row_added:boolean;
+    last_gap_m:number|null; fallback_cell_count:number; turn_clearance_unchanged:boolean;
+    basis?:PlanningBasis; supplement?:string; supplement_level_count?:number; supplement_gain_m2?:number}
+  native_tsp?: { solver:string; time_limit_seconds:number; start_end_policy:string; global_optimality_proven:boolean }
+}
+export interface PlanningBasis {
+  kind:string; ring?:'OUTER'|'HOLE'; ring_index?:number; edge_index?:number
+  edge_points?:readonly (readonly number[])[]; angle_rad:number; anchor_y_local_m?:number
+  target_edge_offset_m?:number; actual_anchor_offset_m?:number
 }
 export interface OptimizationResult {
   schema_version?: number; policy?: string; turn_mode?: string; coverage_objective_enabled?: boolean
@@ -63,6 +84,10 @@ export interface OptimizationResult {
   search_complete?:boolean; candidate_limit_enabled?:boolean; search_time_limit_enabled?:boolean
   search_resolution_m:number; final_resolution_m:number; elapsed_seconds:number; selection_scope:string
   weights: Record<string,number>; energy_model?:{calibrated:boolean;unit:string}
+  weight_policy?:string; candidates_truncated?:boolean; angle_count?:number; boundary_basis_count?:number
+  layout_search?: {families:readonly string[];native_angle_step_deg:number;partition_angles_rad:readonly number[];
+    native_objectives:readonly string[];native_route_search:readonly string[];family_candidate_counts:Record<string,number>}
+  normalization?:{coverage:string;overlap:string;length:string;turns?:string;length_reference_m:number;turn_reference_count?:number}
   curve_type?: string; reverse_execution_supported?: boolean; allow_reverse?: boolean
   headland_search?: {schema_version:number;method:string;range_min_m:number;range_max_m:number;
     selected_width_m?:number;initial_widths_m:readonly number[];refinement_widths_m:readonly number[];
@@ -76,6 +101,7 @@ export interface CoverageMap {
   state: string; run_id: string; reason?: string
   mission_id?: string; mission_revision?: number; frame_id?: string; projection?: Projection
   reference_fingerprint?: string; generated_at?: string; snapshot_age_seconds?: number
+  path_order?: CoveragePathOrder
   width_m?: number; resolution_m?: number; extent?: number[]
   inset_polygons?: PathPoint[][][]; inset_distance_m?: number
   field_rings?: PathPoint[][]

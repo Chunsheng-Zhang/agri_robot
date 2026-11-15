@@ -17,7 +17,7 @@ const state = computed(() => isFresh(status.value) ? status.value?.state : undef
 const planning = computed(() => props.kind === 'coverage' && isFresh(devices.value?.planning) && devices.value?.planning.state === 'PLANNING')
 const planningProgress = computed(() => planning.value ? devices.value?.planning.search_progress : null)
 const planningPhases: Record<string,string> = { INITIALIZING: '准备地块与评价网格', COARSE: '作业角度粗搜索',
-  REFINE: '较优角度细化搜索', FINALIZING: '汇总评分与校验路径', COMPLETE: '搜索完成，等待最终校验' }
+  REFINE: '较优角度细化搜索', NATIVE_LAYOUTS: '比较原生不分解与分区独立方向布局', FINALIZING: '汇总评分与校验路径', COMPLETE: '搜索完成，等待最终校验' }
 const displayState = computed(() => planning.value ? 'PLANNING' : activeRun.value?.stage === 'planning'
   ? activeRun.value.state : state.value)
 const canPause = computed(() => !busy.value && state.value === 'RUNNING')
@@ -52,7 +52,7 @@ async function operate(action: 'pause' | 'resume' | 'cancel' | 'cancel_plan') {
       <strong>智能规划进度：{{ planningPhases[planningProgress.phase] || planningProgress.phase }}</strong>
       <small>已比较 {{ planningProgress.evaluated_count }} 套候选 · 可执行 {{ planningProgress.feasible_count }} 套 · 已用时 {{ numberText(planningProgress.elapsed_seconds, 1) }} s</small>
       <template v-if="planningProgress.stage_total > 0">
-        <small>本阶段方向进度 {{ planningProgress.stage_completed }} / {{ planningProgress.stage_total }}<span v-if="planningProgress.angle_rad != null"> · 当前方向 {{ numberText(planningProgress.angle_rad * 180 / Math.PI, 2) }}°</span></small>
+        <small>本阶段布局／方向进度 {{ planningProgress.stage_completed }} / {{ planningProgress.stage_total }}<span v-if="planningProgress.angle_rad != null"> · {{ planningProgress.phase === 'NATIVE_LAYOUTS' ? '当前方案代表方向' : '当前方向' }} {{ numberText(planningProgress.angle_rad * 180 / Math.PI, 2) }}°</span></small>
         <progress :value="planningProgress.stage_completed" :max="planningProgress.stage_total" aria-label="本阶段作业方向比较进度" />
       </template>
     </div>

@@ -348,11 +348,12 @@ onUnmounted(() => { disposed = true; ++savedPathGeneration; ++entryGeneration; c
     </el-card>
     <el-card v-if="kind === 'coverage'" shadow="never" class="smart-card">
       <template #header><strong>智能规划策略</strong></template>
-      <p>固定原地转向：停车等待 → 原地对齐 → 前进行驶；以往复式作业为基础，必要时局部优化行访问顺序。</p>
+      <p>固定原地转向：停车等待 → 原地对齐 → 前进行驶；Fields2Cover生成分区与作业行，原生TSP统一优化访问顺序和方向，允许跨分区作业。</p>
+      <p>自动比较沿边统一方向、原生整田不分解、分区独立方向三类布局；按同一四目标选择完整可行路径，无需人工选择分解方式。</p>
       <p>机具有效作业宽度 {{ Number(parameters.operation_width ?? 0.8).toFixed(3) }} m，由上方参数人工设置，规划与评价共用。</p>
       <p>最小安全地头 <strong>{{ minimumHeadland.toFixed(3) }} m</strong>，由车辆长宽、旋转中心和安全余量计算，不搜索人工地头宽度。</p>
-      <p>自动搜索 0～180° 作业方向，先粗搜再细化；固定权重：覆盖率最大化 0.5、重复覆盖最小化 0.3、总长度最小化 0.2。</p>
-      <p class="hint">总长度包含作业行和换行连接。车辆尺寸须包含旋转时的实际外伸，默认车长及余量为初值。完整执行预定角度与行顺序比较，顶部显示进度，可人工取消；不保证全局最优。</p>
+      <p>以有效边绑定平行方向和半幅宽起排位置，比较原布局与补边布局；保留PCA、0～180°全局粗搜及细化。固定权重：覆盖率最大化 0.40、重复覆盖最小化 0.25、总长度最小化 0.20、转弯次数最小化 0.15。</p>
+      <p class="hint">总长度包含作业行和换行连接。车辆尺寸须包含旋转时的实际外伸，默认车长及余量为初值。转弯次数按完整路径停车转向标记统计，不含接近与首次对齐。完整执行预定候选比较，TSP为启发式顺序搜索；顶部显示进度，可人工取消，不保证全局最优。</p>
       <div class="editor-toolbar">
         <el-button type="primary" plain :loading="busy" :disabled="!dirty" @click="save">保存任务</el-button>
         <el-button type="success" :loading="busy" :disabled="dirty || !controlsIdle || devices?.safety.mode !== 'coverage'" @click="operate('optimize')">一键优化规划</el-button>
