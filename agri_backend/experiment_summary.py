@@ -164,6 +164,9 @@ def write_summary(directory, mission, metrics):
                 f'正式跟踪横向误差总体标准差：{fmt(assessment["subsets"]["all_tracking"]["cross_track_m"]["std"],100)} cm；绝对误差中位数：{fmt(assessment["subsets"]["all_tracking"]["cross_track_m"]["abs_median"],100)} cm；航向绝对误差 P99：{fmt(assessment["subsets"]["all_tracking"]["heading_error_deg"]["abs_p99"])}°。',
                 f'最后记录位置距终点：{fmt(assessment["final_endpoint_distance_m"],100)} cm；记录进度：{fmt(assessment["final_progress_percent"])}%。未完成任务的误差只代表已记录路段。',
                 '',assessment['method']['straight_definition']+'；'+assessment['method']['curvature_definition']+'。']
+    if metrics.get('standard_accuracy'):
+        from .standard_accuracy import report_section
+        lines+=['',report_section(metrics['standard_accuracy'])]
     lines+=['','## 阶段、暂停与速度','', '| 阶段 | 样本数 | 记录跨度 s（含空档） | 航向 MAE ° | 航向 RMSE ° |','| --- | ---: | ---: | ---: | ---: |']
     for name,phase in metrics['phases'].items():
         h=phase['heading_error_deg']

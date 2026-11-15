@@ -90,6 +90,7 @@ def analyze_run(directory):
     ]
     sources = {}
     phase_rows = {}
+    raw_phase_rows = {}
     track_files = sorted((directory / 'tracks').glob('*.csv'))
     for file in track_files:
         phase = ('approach' if file.name.startswith('approach_') else 'alignment' if file.name.startswith('alignment_')
@@ -99,16 +100,19 @@ def analyze_run(directory):
         sidecar = json.loads(file.with_suffix('.json').read_text())
         if sidecar.get('projection') != run['projection'] or sidecar.get('frame_id') != 'map':
             raise ValueError('Trajectory coordinate origin/frame mismatch')
-        rows = trajectory(read_csv(file))
+        raw_phase_rows[phase] = read_csv(file)
+        rows = trajectory(raw_phase_rows[phase])
         if rows and any(b['stamp'] <= a['stamp'] for a,b in zip(rows,rows[1:])):
             notes.append(f'{phase}: non-increasing ROS timestamps; time-based comparisons need review.')
         phase_rows[phase], sources[phase] = rows, str(file.relative_to(directory))
     reference = []
+    reference_document = None
     if run['mode'] in ('coverage','following'):
         paths = sorted((directory / 'paths').glob('following_*.json' if run['mode']=='following' else 'coverage_*.json'))
         if len(paths) != 1:
             raise ValueError('Coverage report requires exactly one saved reference path')
         document = json.loads(paths[0].read_text())
+        reference_document = document
         if document.get('projection') != run['projection'] or document.get('frame_id') != 'map':
             raise ValueError('Reference coordinate origin/frame mismatch')
         reference = [(float(p['x']), float(p['y'])) for p in document['points']]
@@ -163,6 +167,14 @@ def analyze_run(directory):
         communication={'available':False,'reason':f'通信分析失败，不能宣称零丢包/零延时：{exc}'}
         notes.append(communication['reason'])
     assessment=tracking_assessment(directory,mission,run,reference,phase_rows,motion,mgx,statistics)
+    from .standard_accuracy import assess, empty_result, write_artifacts
+    try:
+        # Preserve invalid rows as continuity barriers for spatial resampling.
+        # The legacy descriptive statistics intentionally keep their old parser.
+        standard_accuracy, standard_samples = assess(directory,mission,run,reference_document,raw_phase_rows.get('tracking',[]))
+    except (OSError,ValueError,KeyError,TypeError) as exc:
+        standard_accuracy,standard_samples = empty_result(f'作业精度统计不可用：{exc}'),[]
+    write_artifacts(directory,standard_accuracy,standard_samples)
     plot_data=build_plot_data(directory,communication,capture,t0,run['mode'],primary if main_rows else None)
     communication['plots']={'loss':'communication_loss.png','latency':'communication_latency.png',
         'data':'communication_plot_data.json','time_origin_ros_s':plot_data['time_origin_ros_s'],
@@ -176,7 +188,7 @@ def analyze_run(directory):
         'phases': phases, 'motion_by_topic': speeds,
         'telemetry_counts': dict(Counter(r['topic'] for r in mgx)),
         'missing_topics': missing, 'capture': capture, 'communication':communication,
-        'tracking_assessment':assessment, 'notes': notes}
+        'tracking_assessment':assessment, 'standard_accuracy':standard_accuracy, 'notes': notes}
     if run.get('coverage_quality_version') == 1 and run['mode'] == 'coverage':
         try:
             from .coverage_quality import completed_quality
@@ -213,6 +225,7 @@ def analyze_run(directory):
              '![Message age and backend handling latency](communication_latency.png)', '',
              '## Data and limitations', '', *['- ' + note for note in notes], '',
              'Detailed per-phase statistics: `metrics.json` and `metrics.csv`.',
+             'GB/T formula statistics and 50-point inputs: `standard_accuracy_report.md`, `standard_accuracy.json`, `standard_accuracy.csv`, `standard_accuracy_samples.csv`.',
              'Raw capture integrity: `../telemetry/recording.json`.', '']
     (output / 'README.md').write_text('\n'.join(lines), encoding='utf-8')
     if (output/'coverage_quality_report.md').exists():
