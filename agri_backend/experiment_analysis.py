@@ -215,6 +215,8 @@ def analyze_run(directory):
     with PLOT_LOCK:
         plot_report(output, mission, {**run, 'state': metrics['task_state']}, reference, phase_rows, motion, mgx, t0, primary)
         plot_communication(output,plot_data,communication,run['id'])
+        from .standard_accuracy_plots import plot_standard_accuracy
+        plot_standard_accuracy(output,standard_accuracy,standard_samples,run['id'])
     write_summary(directory,mission,metrics)
     if (output/'coverage_quality_report.md').exists():
         with (output/'report.md').open('a',encoding='utf-8') as stream:

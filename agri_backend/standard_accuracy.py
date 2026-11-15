@@ -22,6 +22,7 @@ N = 50
 EPS = 1e-6
 MAX_SECTIONS = 6000
 TITLES = {'straight': '直线作业精度', 'handover': '交接行精度', 'curve': '曲线作业精度'}
+PLOT_FILES = {kind: f'{kind}_accuracy.png' for kind in TITLES}
 FORMULAS = {
     'straight': 'P1=sqrt(sum((x_i-mean(x))^2)/(N-1)); x_i为有符号横向垂距，cm',
     'handover': 'P2=sqrt(sum((abs(h_i-H)-mean(abs(h-H)))^2)/(N-1)); h_i、H均为cm',
@@ -371,6 +372,7 @@ def assess(directory, mission, run, document, rows):
 def write_artifacts(directory, result, samples):
     output=directory/'analysis'
     result['implementation_sha256']=hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+    result['plots']=PLOT_FILES.copy()
     atomic_json(output/'standard_accuracy.json',result)
     columns=['indicator','section_id','state','precision_cm','samples','raw_samples','mean_input_cm',
              'reference_length_m','evaluated_length_m','preset_spacing_cm','reason']
@@ -400,4 +402,9 @@ def report_section(result):
     lines+=['','采样与解释：','']+['- '+note for note in result.get('notes',[])]
     lines+=['','恒定偏移的标准差可能为0，不能据此认定没有偏差。现有MAE、RMSE、P95、航向和速度指标继续保留。',
             '分段数值与输入均值：`standard_accuracy.csv`；50点及配对坐标：`standard_accuracy_samples.csv`；完整方法：`standard_accuracy.json`。','']
+    if result.get('plots'):
+        lines+=['','### 三项作业精度图','',
+                '各段从自身已观测起点起算距离，分别绘制，不跨暂停或孔洞连接。上图为50点误差，下图为各段精度；彩色突出最大精度值所在段，灰线为其他有效段。直线/交接行使用纵向站位距离，曲线使用实际轨迹弧长。','']
+        for key,title in TITLES.items():
+            lines += [f'![{title}]({result["plots"][key]})','']
     return '\n'.join(lines)

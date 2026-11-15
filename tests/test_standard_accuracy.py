@@ -291,4 +291,10 @@ def test_fresh_background_worker_generates_new_reports_with_existing_plots(tmp_p
     assert accuracy['straight']['valid_sections']==3 and accuracy['handover']['valid_sections']==2
     assert (tmp_path/'analysis/standard_accuracy_samples.csv').is_file()
     assert (tmp_path/'analysis/trajectory_and_speed.png').stat().st_size>10000
-    assert '按GB/T 46270—2025公式计算的作业精度' in (tmp_path/'analysis/report.md').read_text()
+    report = (tmp_path/'analysis/report.md').read_text()
+    assert '按GB/T 46270—2025公式计算的作业精度' in report
+    from agri_backend.standard_accuracy import PLOT_FILES
+    for filename in PLOT_FILES.values():
+        assert (tmp_path/'analysis'/filename).stat().st_size>10000
+        assert f']({filename})' in report
+    assert accuracy['plots']==PLOT_FILES
