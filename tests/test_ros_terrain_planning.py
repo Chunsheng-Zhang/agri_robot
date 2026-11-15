@@ -32,6 +32,8 @@ def test_terrain_matrix_never_publishes_outside_or_hole_crossing_paths():
     fields = {
         'convex_rectangle': box(0,0,24,18),
         'convex_pentagon': Polygon([(0,0),(22,0),(26,12),(14,22),(0,16)]),
+        'curved_boundary': Polygon([(14+14*math.cos(i*math.pi/12),12+10*math.sin(i*math.pi/12)) for i in range(24)]),
+        'many_sided_concave': Polygon([(0,0),(24,0),(24,8),(19,8),(19,15),(24,15),(24,22),(13,22),(13,16),(7,16),(7,22),(0,22)]),
         'concave_L': Polygon([(0,0),(24,0),(24,10),(12,10),(12,22),(0,22)]),
         'concave_U': Polygon([(0,0),(24,0),(24,22),(16,22),(16,8),(8,8),(8,22),(0,22)]),
         'one_hole': Polygon([(0,0),(28,0),(28,22),(0,22)],holes=[[(11,8),(17,8),(17,14),(11,14)]]),
@@ -47,6 +49,8 @@ def test_terrain_matrix_never_publishes_outside_or_hole_crossing_paths():
             polygon = load_field(file,frame)
             # Preserve the shared map coordinates, including their offsets.
             fields['generated_concave_'+key] = polygon
+    if os.getenv('AGRI_TERRAIN_FIELD_FILE'):
+        fields['actual_five_point'] = load_field(Path(os.environ['AGRI_TERRAIN_FIELD_FILE']),frame)
     if os.getenv('AGRI_TERRAIN_FILTER'):
         selected=set(os.environ['AGRI_TERRAIN_FILTER'].split(','))
         fields={name:field for name,field in fields.items() if name in selected}
@@ -88,11 +92,14 @@ def test_terrain_matrix_never_publishes_outside_or_hole_crossing_paths():
             variants=[(name,'DUBINS_CC',False) for name in ('BOUSTROPHEDON','SNAKE','SPIRAL','CONTOUR','SMART')]
             if field_name in ('convex_rectangle','one_hole'):
                 variants += [('BOUSTROPHEDON',curve,False) for curve in ('DUBINS','REEDS_SHEPP','REEDS_SHEPP_HC')]
-            if field_name in ('convex_rectangle','concave_L','one_hole','narrow_neck'):
+            if field_name in ('convex_rectangle','concave_L','one_hole','narrow_neck','actual_five_point'):
                 variants += [('BOUSTROPHEDON','DUBINS_CC',True),('SMART','DUBINS_CC',True)]
             if os.getenv('AGRI_TERRAIN_CURVES'):
                 curves=set(os.environ['AGRI_TERRAIN_CURVES'].split(','))
                 variants=[v for v in variants if v[0]=='BOUSTROPHEDON' and v[1] in curves and not v[2]]
+            if os.getenv('AGRI_TERRAIN_MODES'):
+                modes=set(os.environ['AGRI_TERRAIN_MODES'].split(','))
+                variants=[v for v in variants if v[0] in modes]
             for mode,curve,entry in variants:
                 label=f'{field_name}__{mode}__{curve}'+('__entry' if entry else '')
                 started=time.monotonic()
@@ -149,12 +156,21 @@ def test_terrain_matrix_never_publishes_outside_or_hole_crossing_paths():
                             selected=optimization['selected']
                             row.update(coverage_percent=selected['coverage_percent'],overlap_percent=selected['overlap_percent'],
                                        angle_rad=selected['angle_rad'],candidates=optimization['evaluated_count'])
+                            if selected.get('routing')=='F2C_TSP':
+                                row.update({k:selected[k] for k in ('cell_count','cell_reentries','point_turn_count',
+                                    'swath_length_m','transition_length_m','connection_policy')})
+                                visits=selected['cell_visit_order']
+                                assert len(set(visits))==selected['cell_count']
+                                assert selected['cell_reentries']==len(visits)-len(set(visits))
+                                assert selected['continuous_cells_required'] is False
                         assert row['safety_passed'],row
                     else:
                         assert not list((directory/'paths').glob('coverage_*.json')),row
                         wait(lambda:get('/api/robot/path/reference')['count']==0)
                         row['failure_reference_cleared']=True
                 row['elapsed_seconds']=time.monotonic()-started
+                if mode=='SMART':
+                    assert row['state']==('FAILED' if field_name=='narrow_neck' else 'READY'),row
                 safety=get('/api/devices')['safety']
                 assert safety['emergency_stop'] and not safety['owner']
                 assert system.state['v']==system.state['w']==0

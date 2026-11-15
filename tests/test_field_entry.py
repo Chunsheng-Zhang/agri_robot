@@ -78,14 +78,14 @@ def test_saved_entry_metadata_cannot_be_retargeted_or_connect_through_a_hole():
     with pytest.raises(ValueError,match='穿越'):validate_entry_metadata(altered,field,parameters(),expected,start)
 
 
-def test_smart_search_compares_all_four_entry_variants_and_counts_connection_only_in_length():
+def test_smart_search_compares_native_open_route_ends_and_counts_connection_only_in_length():
     field=Polygon([(0,0),(14,0),(14,10),(0,10)])
     p=parameters(entry=entry(1,1),operation_width=2.5)
     result=optimize(field.wkb,p)
     report=result['optimization']
     assert report['state']=='SUCCEEDED' and report['search_complete']
     assert {r['variant'] for r in report['candidates']}=={0,1,2,3}
-    assert report['weights']=={'coverage':.5,'overlap':.3,'length':.2}
+    assert report['weights']=={'coverage':.4,'overlap':.25,'length':.2,'turns':.15}
     selected=report['selected'];connection=result['metadata']['entry']
     assert selected['entry_length_m']==pytest.approx(connection['distance_m'])
     assert selected['length_m']==pytest.approx(selected['entry_length_m']+selected['working_length_m'])

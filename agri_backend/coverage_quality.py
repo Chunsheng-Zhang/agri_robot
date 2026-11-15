@@ -385,14 +385,62 @@ def write_report(directory,mission,result,metrics):
         method_position=lines.index('## 本项目公式与建模约定')
         headland=optimization.get('headland_search') or {}
         if optimization.get('turn_mode')=='POINT_TURN':
+            weights=optimization.get('weights') or {'coverage':.5,'overlap':.3,'length':.2}
+            formula=(f'{weights.get("coverage")}×(1−覆盖率/100)+'
+                     f'{weights.get("overlap")}×重复覆盖率/100+'
+                     f'{weights.get("length")}×L/(L+A/W)')
+            if 'turns' in weights:formula+=f'+{weights["turns"]}×N/(N+N0)'
             optimization_lines=['','## 本轮原地转向智能规划','',
                 f'- 作业角度：{selected.get("angle_rad")} rad；行顺序：{selected.get("order")}。',
                 f'- 最小安全地头：{selected.get("headland_width_m")} m；原地转向点：{selected.get("point_turn_count")}。',
                 f'- 车辆包络：长{headland.get("robot_length_m")} m，宽{headland.get("robot_width_m")} m，安全余量{headland.get("safety_margin_m")} m。',
-                '- 评分：0.5×(1−覆盖率/100)+0.3×重复覆盖率/100+0.2×L/(L+A/W)，越小越好；总长度包含全部换行连接。',
+                f'- 本轮归档评分：{formula}，越小越好；总长度包含全部换行连接，历史结果沿用原权重。',
                 '- 机具有效幅宽固定，整田分母包含地头并扣除禁入区；每个几何拐角停车后原地对齐。',
-                '- 未评价能耗或作业时间；在有限候选和预算内择优，不保证全局最优。',
+                '- 未评价能耗或作业时间；在本轮候选中择优，不保证全局最优。',
                 '- 完整参数、候选、拒绝原因和代码指纹见 `../paths/optimization.json`。','']
+            if 'turns' in weights:
+                normal=optimization.get('normalization') or {}
+                basis=selected.get('basis') or {}
+                with (directory/'analysis/planning_objectives.csv').open('w',encoding='utf-8',newline='') as stream:
+                    writer=csv.writer(stream)
+                    writer.writerow(['objective','direction','raw_value','unit','normalized_cost','weight','weighted_cost'])
+                    for key,direction,value,unit in (
+                        ('coverage','maximize',selected.get('coverage_percent'),'%'),
+                        ('overlap','minimize',selected.get('overlap_percent'),'%'),
+                        ('length','minimize',selected.get('length_m'),'m'),
+                        ('turns','minimize',selected.get('point_turn_count'),'count')):
+                        writer.writerow([key,direction,value,unit,(selected.get('objective_terms') or {}).get(key),
+                            weights.get(key),(selected.get('weighted_terms') or {}).get(key)])
+                optimization_lines += [
+                    f'- 转弯次数N：{selected.get("point_turn_count")}；按最终路径实际停车转向标记统计，包含换行/绕障，不含接近和首次对齐。',
+                    f'- N0=max(1,2√A/W)={normal.get("turn_reference_count")}；同一地块与幅宽的所有候选共用，非实测时间或能耗。',
+                    f'- 基准来源：{basis.get("kind")}；边界：{basis.get("ring")}；环索引：{basis.get("ring_index")}；边索引：{basis.get("edge_index")}（索引从0开始）。',
+                    f'- 归一化目标：`{json.dumps(selected.get("objective_terms",{}),ensure_ascii=False)}`；加权贡献：`{json.dumps(selected.get("weighted_terms",{}),ensure_ascii=False)}`。',
+                    '- 四项目标原始值、归一化代价、权重及加权贡献另存为 `planning_objectives.csv`，缺失项保留空值。',
+                    '- 四项权重为本项目初始工程偏好，依据与归一化定义统一保存在项目说明，不代表期刊统一标准或实车标定。','']
+            if optimization.get('policy')=='POINT_TURN_NATIVE_TSP':
+                optimization_lines += [
+                    f'- 布局类型：{selected.get("layout_family","EDGE_GLOBAL")}；方向模式：{selected.get("direction_mode","GLOBAL")}。',
+                    '- 路由来源：Fields2Cover原生TSP/OR-Tools；允许跨分区访问，完整保留Route连接，不强制返回起点。',
+                    f'- 几何分区：{selected.get("cell_count")}；分区作业回入次数：{selected.get("cell_reentries")}；不要求分区连续完成。',
+                    f'- 作业行长度：{selected.get("swath_length_m")} m；换行/换区连接长度：{selected.get("transition_length_m")} m。',
+                    '- 预定角度完整比较；每次原生TSP调用沿用1秒启发式求解，不代表全部行顺序已穷举或全局最优。','']
+                if selected.get('direction_mode')=='PER_CELL':
+                    optimization_lines += [
+                        '- 上述作业角度为最长作业分区的代表值，不能作为全局作业方向；各区方向如下。',
+                        *[f'- 分区{cell["cell_id"]+1}：{cell["angle_rad"]} rad，{cell["swath_count"]}行。'
+                          for cell in selected.get('cell_directions',[])],
+                        '- 分区仅为虚拟切线，不额外预留地头；最终完整旋转净空检查保留。','']
+                layout=selected.get('row_layout') or {}
+                if layout.get('policy')=='EDGE_ALIGNED_FIXED_SPACING':
+                    optimization_lines += [
+                        '- 靠边排线：以原边界半幅宽为首末行目标，中间保持机具幅宽间距，必要时补末侧行；端部及全路径旋转净空保持不变。',
+                        f'- 本方向扫描层数：{layout.get("scan_level_count")}；末侧补行：{layout.get("last_side_row_added")}；末侧行间距：{layout.get("last_gap_m")} m；窄分区保留行：{layout.get("fallback_cell_count")}。','']
+                elif layout.get('policy')=='EDGE_ANCHORED_FIXED_SPACING':
+                    optimization_lines += [
+                        '- 沿边候选绑定方向及半幅宽目标；固定幅宽排线向两侧铺满，原布局与正增益补边集合按完整路线评分比较；不独立搜索偏移、不均分全局间距。',
+                        f'- 本轮补边布局：{layout.get("supplement")}；补充扫描层数：{layout.get("supplement_level_count")}；补边作业行足迹几何增益：{layout.get("supplement_gain_m2")} m²；窄分区保留行：{layout.get("fallback_cell_count")}。',
+                        '- 补边增益仅是生成候选时的行足迹增益；最终覆盖与重复仍以完整路线的统一网格为准，不穷举补边子集。','']
         elif headland.get('method')=='MANUAL':
             optimization_lines+=['- 地头选择：严格采用任务人工地头宽度，未搜索其他宽度。','']
         elif headland:

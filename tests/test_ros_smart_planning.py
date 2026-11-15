@@ -1,5 +1,6 @@
 """Point-turn planner/API/save/load on explicitly isolated ROS, no hardware."""
 import json
+import math
 import os
 import time
 import pytest
@@ -39,7 +40,7 @@ def test_web_smart_planning_success_save_load_failure_and_cancel_without_motion(
         post('/api/system/mode',{'mode':'coverage'});until(system.planner.mode_ready)
         mission=create(optimization_min_coverage=100,optimization_patterns='CONTOUR',
                        optimization_headland_min=100,optimization_headland_max=100,
-                       optimization_weight_energy=1,optimization_headland_mode='MANUAL',allow_reverse=True)
+                       optimization_weight_energy=1,optimization_headland_mode='MANUAL',allow_reverse=False)
         for key in ('optimization_min_coverage','optimization_patterns','optimization_headland_min',
                     'optimization_weight_energy','optimization_headland_mode','optimization_max_candidates','optimization_time_budget'):
             assert key not in mission['parameters']
@@ -51,9 +52,17 @@ def test_web_smart_planning_success_save_load_failure_and_cancel_without_motion(
         until(lambda:((get('/api/workspace').get('active_run') or {}).get('coverage_quality') or {}).get('state')=='SUCCEEDED')
         run=get('/api/workspace')['active_run'];directory=system.workspace.store.run_path(run['id'])
         report=get(f'/api/runs/{run["id"]}/optimization')
-        assert report['state']=='SUCCEEDED' and report['schema_version']==2
+        assert report['state']=='SUCCEEDED' and report['schema_version']==3
+        assert system.planner.smart_progress_watchdog
+        assert report['policy']=='POINT_TURN_NATIVE_TSP'
+        assert get('/api/devices')['planning']['request_id']==run['id']
+        assert report['selected']['routing']=='F2C_TSP'
+        assert report['selected']['continuous_cells_required'] is False
+        assert report['selected']['layout_family'] in ('EDGE_GLOBAL','NATIVE_WHOLE_FIELD','NATIVE_PER_CELL')
+        assert report['layout_search']['families']==['EDGE_GLOBAL','NATIVE_WHOLE_FIELD','NATIVE_PER_CELL']
+        assert any(c.get('row_layout',{}).get('policy')=='EDGE_ANCHORED_FIXED_SPACING' for c in report['candidates'] if c.get('row_layout'))
         assert report['turn_mode']=='POINT_TURN' and report['coverage_objective_enabled']
-        assert report['weights']=={'coverage':.5,'overlap':.3,'length':.2}
+        assert report['weights']=={'coverage':.4,'overlap':.25,'length':.2,'turns':.15}
         assert report['search_complete'] and report['evaluated_count']>1
         assert not report['candidate_limit_enabled'] and not report['search_time_limit_enabled']
         assert report['configuration']=={}
@@ -63,13 +72,17 @@ def test_web_smart_planning_success_save_load_failure_and_cancel_without_motion(
         assert status['search_progress']['evaluated_count']==report['evaluated_count']
         elapsed=status['search_progress']['elapsed_seconds'];time.sleep(.25)
         assert get('/api/devices')['planning']['search_progress']['elapsed_seconds']==elapsed
-        assert {c['mode'] for c in report['candidates']}=={'BOUSTROPHEDON'}
+        assert {c['mode'] for c in report['candidates']}=={'TSP'}
         assert report['reference_fingerprint']==run['reference_fingerprint']
         assert report['projection']==run['projection'] and not report['allow_reverse']
         assert 'energy_model' not in report and report['curve_type']=='POINT_TURN'
         saved=json.loads(next((directory/'paths').glob('coverage_*.json')).read_text())
+        assert saved['planning']['policy_version']==7
+        assert saved['planning']['path_details']['row_layout']==report['selected']['row_layout']
         poses=[(p['x'],p['y'],p['yaw']) for p in saved['points']]
         stops=point_turn_indices(poses);assert len(stops)>2
+        assert report['selected']['point_turn_count']==len(stops)
+        assert report['selected']['score']==pytest.approx(sum(report['selected']['weighted_terms'].values()))
         assert saved['motion_signature']==motion_signature(poses)
         h=rotation_envelope(.45,.2,.05)['headland_width_m']
         assert report['selected']['headland_width_m']==h
@@ -89,7 +102,8 @@ def test_web_smart_planning_success_save_load_failure_and_cancel_without_motion(
         post(route+'/save');assert get(route+'/path')['count']==len(poses)
         loaded=post(route+'/load')['run']
         until(lambda:(get('/api/workspace').get('active_run') or {}).get('state')=='READY')
-        assert loaded['source_plan_id']==run['id'] and loaded['planning_policy']=='POINT_TURN_ANGLE'
+        assert loaded['source_plan_id']==run['id'] and loaded['planning_policy']=='POINT_TURN_NATIVE_TSP'
+        assert system.planner.smart_progress_watchdog is False
         latest=system.tracker.pending_path
         from agri_base.runtime import yaw_of
         loaded_poses=[(p.pose.position.x,p.pose.position.y,yaw_of(p.pose.orientation)) for p in latest.poses]
@@ -104,10 +118,17 @@ def test_web_smart_planning_success_save_load_failure_and_cancel_without_motion(
         until(lambda:system.tracker.state=='RUNNING' and system.tracker.controller.phase=='TRACKING')
         control=system.tracker.controller
         assert len(control.path.legs)==len(stops)+1
-        hi=control.tracker.leg[1];x,y,_=control.path.at(hi)
-        yaw=control.path.at(hi-1e-6)[2]
-        control.tracker.progress=hi-.001
-        system.state.update(x=x,y=y,yaw=yaw,v=0.,w=0.)
+        # Move synthetic observations in bounded steps. Teleporting controller
+        # progress before the new odometry arrives correctly trips deviation
+        # protection when the newly selected first leg is long.
+        lo,hi,_=control.tracker.leg
+        steps=max(1,math.ceil((hi-lo)/.5))
+        for i in range(1,steps+1):
+            if control.phase=='ALIGNING':break
+            target=lo+(hi-lo)*i/steps
+            x,y,yaw=control.path.at(min(target,hi-1e-6))
+            system.state.update(x=x,y=y,yaw=yaw,v=0.,w=0.)
+            until(lambda:control.phase=='ALIGNING' or control.tracker.progress>=target-.025,5)
         until(lambda:control.phase=='ALIGNING' and control.alignment_reason=='point_turn')
         until(lambda:abs(system.state['w'])>.05)
         assert system.state['v']==0 and abs(system.state['w'])<=.3
@@ -125,7 +146,9 @@ def test_web_smart_planning_success_save_load_failure_and_cancel_without_motion(
         quality_report=execution/'analysis/coverage_quality_report.md'
         until(quality_report.exists,45)
         text=quality_report.read_text()
-        assert '本轮原地转向智能规划' in text and '0.5×' in text
+        assert '本轮原地转向智能规划' in text and '0.4×' in text and '0.15×N/(N+N0)' in text
+        assert 'Fields2Cover原生TSP/OR-Tools' in text and '不强制返回起点' in text
+        assert '沿边候选绑定方向及半幅宽目标' in text and '不独立搜索偏移' in text
         assert '相对能耗代理：' not in text
         # Huge chassis cannot fit; there is no partial reference to execute.
         mission=create(width=2,height=2,robot_length=10.)

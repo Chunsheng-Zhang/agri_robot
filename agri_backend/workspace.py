@@ -147,6 +147,10 @@ class Workspace:
             state, reason = 'CANCELED', '工作模式已切换，需明确重新规划/开始'
         elif run['stage'] == 'planning':
             status = snapshot['planning']
+            # A latched/delayed terminal status from the previous request can
+            # arrive after this request was sent. Arrival time is insufficient.
+            if 'request_id' in status and status['request_id'] != run['id']:
+                return
             received = monotonic() - (status.get('age_seconds') or 0)
             if not status['fresh'] or received < (self.plan_requested if self.plan_requested is not None else monotonic()):
                 return
@@ -253,7 +257,7 @@ class Workspace:
             run['coverage_quality_version'] = 1
             run['plan_save_required'] = True
             run['planning_strategy'] = 'SMART' if optimized else 'MANUAL'
-            if optimized:run['planning_policy']='POINT_TURN_ANGLE'
+            if optimized:run['planning_policy']='POINT_TURN_NATIVE_TSP'
             self.store.save_run(run)
             directory = self.store.run_path(run['id'])
             boundary = directory / 'config/field.json'
@@ -281,7 +285,8 @@ class Workspace:
                     'operation_width','min_turning_radius')},
                     'allow_reverse':False if optimized else bool(p.get('allow_reverse',False)),
                     'entry_config':json.dumps(mission.get('entry'),allow_nan=False),
-                    'boundary_file': str(boundary), 'output_directory': str(directory / 'paths'), 'generate_decomp': False})
+                    'boundary_file': str(boundary), 'output_directory': str(directory / 'paths'),
+                    'request_id': run['id'], 'generate_decomp': False})
                 self.plan_sequence = self.robot_snapshot().get('reference_sequence', 0)
                 self.plan_requested = monotonic()
                 result = gateway.trigger('/planning/optimize' if optimized else '/planning/plan')
@@ -337,6 +342,7 @@ class Workspace:
                         atomic_json(directory/'paths/optimization.json',{**report,'reused_from':plan_id})
                 gateway=self.gateway()
                 gateway.parameters('coverage_adapter',{'boundary_file':str(directory/'config/field.json'),
+                    'request_id':run['id'],
                     'entry_config':json.dumps(mission.get('entry'),allow_nan=False),
                     'output_directory':str(directory/'paths'),'saved_path_file':str(directory/'config/saved_path.json'),
                     'robot_width':float(mission['parameters']['robot_width']),
@@ -377,7 +383,7 @@ class Workspace:
                     run.get('reference_fingerprint') != data.get('reference_fingerprint'))):
                     raise HTTPException(409, '请先为当前任务成功规划，修改任务/模式/参考路径后须重新规划')
                 directory = self.store.run_path(run['id'])
-                if p.get('allow_reverse',False) or run.get('planning_policy')=='POINT_TURN_ANGLE':
+                if p.get('allow_reverse',False) or run.get('planning_policy') in ('POINT_TURN_ANGLE','POINT_TURN_NATIVE_TSP'):
                     from agri_base.path_geometry import motion_signature
                     files=list((directory/'paths').glob('coverage_*.json'))
                     if len(files)!=1:raise HTTPException(409,'缺少唯一的带方向覆盖路径，请重新规划')

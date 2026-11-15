@@ -49,7 +49,7 @@ class CoverageAdapter(Node):
     def __init__(self):
         super().__init__('coverage_adapter')
         self.frame = frame_from_node(self)
-        defaults = {'boundary_file': '', 'output_directory': '', 'robot_width': 0.2,
+        defaults = {'boundary_file': '', 'output_directory': '', 'request_id': '', 'robot_width': 0.2,
                     'robot_length':0.45,'rotation_safety_margin':0.05,'rotation_center_x':0.,'rotation_center_y':0.,
                     'headland_width': 2.0, 'swath_angle': 0.0,
                     'sampling_distance': 0.1, 'planning_timeout': 120.0,
@@ -78,6 +78,7 @@ class CoverageAdapter(Node):
         self.state, self.reason = 'IDLE', ''
         self.origin_matches = False
         self.token = 0
+        self.active_request_id = ''
         self.goal_handle = None
         self.deadline = math.inf
         self.contour_executor = None
@@ -87,6 +88,8 @@ class CoverageAdapter(Node):
         self.progress_queue = None
         self.planning_progress = None
         self.planning_started = None
+        self.smart_progress_watchdog = False
+        self.planning_progress_elapsed = -1.
         self.plan_metadata = None
         self.entry_reference = None
         self.mode, self.mode_revision, self.safety_time, self.owner = None, None, -math.inf, ''
@@ -155,6 +158,7 @@ class CoverageAdapter(Node):
             response.message='请先选择覆盖模式并等待所有控制/规划空闲，确认固定原点一致'
             return response
         try:
+            self.active_request_id = self.get_parameter('request_id').value
             polygon=load_field(self.get_parameter('boundary_file').value,self.frame)
             data,points=read_saved_path(self.get_parameter('saved_path_file').value,self.frame,polygon,
                 self.get_parameter('robot_width').value,self.get_parameter('allow_reverse').value,
@@ -164,6 +168,8 @@ class CoverageAdapter(Node):
             if not self.origin_matches or not self.mode_ready():raise ValueError('加载期间原点或控制状态改变')
             self.token+=1
             self.planning_progress = None
+            self.smart_progress_watchdog = False
+            self.planning_progress_elapsed = -1.
             path=Path();path.header.frame_id='map';path.header.stamp=self.get_clock().now().to_msg()
             for x,y,yaw in points:
                 pose=PoseStamped();pose.header=path.header
@@ -189,15 +195,18 @@ class CoverageAdapter(Node):
             response.message = 'Select coverage mode; require idle controls, matching origin and available planner'
             return response
         try:
+            self.active_request_id = self.get_parameter('request_id').value
             self.polygon = load_field(self.get_parameter('boundary_file').value, self.frame)
             self.plan_metadata = None
             self.entry_reference = parse_entry(json.loads(self.get_parameter('entry_config').value),self.frame)
             self.planning_progress = None
+            self.smart_progress_watchdog = smart
+            self.planning_progress_elapsed = -1.
             self.planning_started = monotonic()
             if contour or smart:
                 self.token += 1
                 self.contour_token = self.token
-                self.state, self.reason = 'PLANNING', '正在搜索往复式作业角度和行顺序（固定原地转向）' if smart else '正在由内向外生成连续回形路径'
+                self.state, self.reason = 'PLANNING', '正在搜索作业角度并调用Fields2Cover原生TSP（固定原地转向）' if smart else '正在由内向外生成连续回形路径'
                 self.deadline = monotonic() + self.get_parameter('planning_timeout').value
                 empty = Path(); empty.header.frame_id = 'map'; self.path_pub.publish(empty)
                 self.ensure_worker()
@@ -358,12 +367,22 @@ class CoverageAdapter(Node):
         return response
 
     def tick(self):
+        now=monotonic()
         if self.progress_queue is not None:
             for _ in range(64):
                 try:token,progress=self.progress_queue.get_nowait()
                 except Empty:break
-                if token==self.token and self.state=='PLANNING':self.planning_progress=progress
-        if self.state == 'PLANNING' and (monotonic() > self.deadline or not self.mode_ready()):
+                if token==self.token and self.state=='PLANNING':
+                    elapsed=progress.get('elapsed_seconds')
+                    if (getattr(self,'smart_progress_watchdog',False) and now<=self.deadline
+                            and isinstance(elapsed,(int,float)) and math.isfinite(elapsed)
+                            and elapsed>getattr(self,'planning_progress_elapsed',-1.)):
+                        # New smart search has no total wall-clock cutoff.
+                        # Keep the existing timeout as a worker inactivity guard.
+                        self.deadline=now+self.get_parameter('planning_timeout').value
+                        self.planning_progress_elapsed=elapsed
+                    self.planning_progress=progress
+        if self.state == 'PLANNING' and (now > self.deadline or not self.mode_ready()):
             self.cancel(None, Trigger.Response())
             self.state, self.reason = 'FAILED', 'Planning timeout or work mode/safety heartbeat changed'
         if self.contour_future is not None and self.contour_future.done():
@@ -420,6 +439,7 @@ class CoverageAdapter(Node):
                     self.planning_progress['elapsed_seconds']=monotonic()-self.planning_started
                 self.planning_started=None
         self.status.publish(String(data=json.dumps({'state': self.state, 'reason': self.reason,
+            'request_id': getattr(self,'active_request_id',''),
             'search_progress': self.planning_progress,
             'output_directory': self.get_parameter('output_directory').value})))
 

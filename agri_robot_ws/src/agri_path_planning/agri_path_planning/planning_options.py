@@ -1,6 +1,8 @@
 """Fixed point-turn policy; obsolete strategy and search limits are discarded."""
 DEFAULTS={}
-WEIGHTS={'coverage':.5,'overlap':.3,'length':.2}
+# Literature-informed engineering preference, not universal journal constants.
+# Rationale and normalization: docs/沿边候选与四目标智能规划.md.
+WEIGHTS={'coverage':.40,'overlap':.25,'length':.20,'turns':.15}
 LEGACY={'optimization_headland_mode','optimization_search_angle','optimization_weight_coverage',
         'optimization_weight_overlap','optimization_weight_length','optimization_weight_energy',
         'energy_forward','energy_turn','energy_reverse','energy_switch','optimization_min_coverage',

@@ -43,7 +43,7 @@ def test_legacy_strategy_fields_are_discarded_and_input_is_not_rewritten():
 
 
 def test_fixed_score_rewards_coverage_and_penalizes_overlap_and_total_length():
-    assert WEIGHTS=={'coverage':.5,'overlap':.3,'length':.2}
+    assert WEIGHTS=={'coverage':.4,'overlap':.25,'length':.2,'turns':.15}
     assert score(100,0,100,100)==pytest.approx(.1)
     assert score(90,0,100,100)>score(100,0,100,100)
     assert score(100,10,100,100)>score(100,0,100,100)
@@ -53,16 +53,17 @@ def test_fixed_score_rewards_coverage_and_penalizes_overlap_and_total_length():
 
 def test_plan_has_one_geometry_model_explicit_turns_and_minimum_score(planned):
     r=planned['optimization'];m=planned['metadata'];p=planned['points']
-    assert r['state']=='SUCCEEDED' and r['schema_version']==2
+    assert r['state']=='SUCCEEDED' and r['schema_version']==3
     assert r['turn_mode']=='POINT_TURN' and r['coverage_objective_enabled']
     assert r['weights']==WEIGHTS and not r['allow_reverse'] and 'energy_model' not in r
     expected=rotation_envelope(.45,.2,.05)
     assert m['rotation_envelope']==expected
     assert m['effective_parameters']['headland_width']==expected['headland_width_m']
     assert r['selected']['score']==min(c['score'] for c in r['candidates'] if c.get('executable'))
-    assert r['selected']['score']==pytest.approx(score(r['selected']['coverage_percent'],r['selected']['overlap_percent'],r['selected']['length_m'],192))
+    assert r['selected']['score']==pytest.approx(score(r['selected']['coverage_percent'],r['selected']['overlap_percent'],r['selected']['length_m'],192,r['selected']['point_turn_count'],r['normalization']['turn_reference_count']))
     assert len({round(c['angle_rad'],5) for c in r['candidates']})>=6
-    assert {c['mode'] for c in r['candidates']}=={'BOUSTROPHEDON'}
+    assert {c['mode'] for c in r['candidates']}=={'TSP'}
+    assert r['policy']=='POINT_TURN_NATIVE_TSP'
     clean,directions=directed_poses(p)
     assert all(d==1 for d in directions) and len(point_turn_indices(p))>2
     validate_point_turn_path(p,box(0,0,16,12),expected)
@@ -140,6 +141,7 @@ def test_outer_timeout_rejects_completed_late_result_and_stale_progress():
     future=Future();future.set_result({'points':[(1,1,0),(2,1,0)]})
     published=[];cancel=Event()
     n=SimpleNamespace(state='PLANNING',reason='',token=7,contour_token=7,deadline=0.,
+        active_request_id='current-request',
         contour_future=future,contour_cancel=cancel,goal_handle=None,progress_queue=progress,
         planning_progress={'phase':'COARSE','evaluated_count':2},planning_started=monotonic(),
         mode_ready=lambda:True,get_parameter=lambda name:SimpleNamespace(value='/test/paths'),
@@ -149,6 +151,49 @@ def test_outer_timeout_rejects_completed_late_result_and_stale_progress():
     assert cancel.is_set() and n.state=='FAILED' and n.contour_future is None
     assert published[-1]['search_progress']['phase']=='FAILED'
     assert published[-1]['search_progress']['evaluated_count']==2
+    assert published[-1]['request_id']=='current-request'
+
+
+def test_smart_worker_activity_can_exceed_total_timeout_but_stale_or_late_progress_cannot_revive_it(monkeypatch):
+    from types import SimpleNamespace
+    from queue import Queue
+    from agri_path_planning import node
+    clock=[100.]
+    monkeypatch.setattr(node,'monotonic',lambda:clock[0])
+    queue=Queue();queue.put((7,{'phase':'COARSE','elapsed_seconds':200.,'evaluated_count':10}))
+    n=SimpleNamespace(state='PLANNING',reason='',token=7,deadline=110.,
+        contour_future=None,goal_handle=None,progress_queue=queue,
+        active_request_id='current',smart_progress_watchdog=True,planning_progress_elapsed=190.,
+        planning_progress=None,planning_started=-100.,mode_ready=lambda:True,
+        get_parameter=lambda name:SimpleNamespace(value=120. if name=='planning_timeout' else ''),
+        status=SimpleNamespace(publish=lambda msg:None))
+    n.cancel=lambda request,response:node.CoverageAdapter.cancel(n,request,response)
+    node.CoverageAdapter.tick(n)
+    assert n.state=='PLANNING' and n.deadline==220.
+    queue.put((6,{'phase':'COMPLETE','elapsed_seconds':300.}))
+    queue.put((7,{'phase':'COARSE','elapsed_seconds':190.}))
+    clock[0]=200.;node.CoverageAdapter.tick(n)
+    assert n.deadline==220.  # Old token and repeated/stale source progress do not extend the lease.
+    clock[0]=221.;queue.put((7,{'phase':'COMPLETE','elapsed_seconds':321.}))
+    node.CoverageAdapter.tick(n)
+    assert n.state=='FAILED' and n.token==8
+
+
+def test_schema3_summary_preserves_four_objective_weights_and_selected_row_outside_display_prefix(tmp_path):
+    origin={'epsg':32650}
+    (tmp_path/'paths').mkdir();(tmp_path/'run.json').write_text(json.dumps({'projection':origin}))
+    candidates=[{'id':i,'point_turn_count':i+2} for i in range(1,141)]
+    report={'schema_version':3,'strategy':'SMART','state':'SUCCEEDED','frame_id':'map','projection':origin,
+        'weights':dict(WEIGHTS),'weight_policy':'COVERAGE_PRIORITY_FOUR_OBJECTIVES_V1',
+        'selected':candidates[-1],'candidates':candidates,'evaluated_count':140,'possible_count':140,
+        'normalization':{'turns':'N/(N+N0)','turn_reference_count':30.}}
+    target=tmp_path/'paths/optimization.json';original=json.dumps(report);target.write_text(original)
+    small=summary(tmp_path)
+    assert small['weights']==WEIGHTS and small['selected']==candidates[-1]
+    assert small['candidates_truncated'] and small['candidates'][-1]==candidates[-1]
+    assert small['evaluated_count']==140 and len(small['candidates'])==129
+    assert small['normalization']['turn_reference_count']==30.
+    assert target.read_text()==original
 
 
 def test_energy_distinguishes_forward_turn_reverse_and_switches():
@@ -218,6 +263,35 @@ def test_report_and_map_partition_use_selected_width_not_requested_width(tmp_pat
     assert '不是 Wh 或实测能源'in text
     assert '本轮不设最低覆盖率门槛'in text
     assert result['optimization']['coverage_constraint_enabled'] is False
+
+
+def test_new_report_uses_archived_four_objectives_turn_definition_and_boundary_basis(tmp_path):
+    from test_coverage_quality import make_run
+    from agri_backend.missions import atomic_json
+    from agri_backend.coverage_quality import completed_quality
+    from agri_backend.saved_plans import signature
+    store,run,directory,origin,points=make_run(tmp_path)
+    run['planning_strategy']='SMART'
+    run['reference_fingerprint']=signature([(p['x'],p['y']) for p in points]);store.save_run(run)
+    report={'schema_version':3,'strategy':'SMART','state':'SUCCEEDED','frame_id':'map','projection':origin,
+        'reference_fingerprint':run['reference_fingerprint'],'turn_mode':'POINT_TURN','policy':'POINT_TURN_NATIVE_TSP',
+        'weights':dict(WEIGHTS),'normalization':{'turn_reference_count':12.},
+        'selected':{'order':'F2C_TSP','headland_width_m':1.,'length_m':6.,'point_turn_count':4,
+            'basis':{'kind':'EDGE','ring':'OUTER','ring_index':0,'edge_index':1},
+            'row_layout':{'policy':'EDGE_ANCHORED_FIXED_SPACING','supplement':'NONE','supplement_level_count':0},
+            'weighted_terms':{'turns':.0375}},'evaluated_count':1,'possible_count':1}
+    path=directory/'paths/optimization.json';atomic_json(path,report);before=path.read_bytes()
+    completed_quality(directory,{'task_state':'COMPLETED'})
+    text=(directory/'analysis/coverage_quality_report.md').read_text()
+    assert '0.4×(1−覆盖率/100)+0.25×重复覆盖率/100+0.2×L/(L+A/W)+0.15×N/(N+N0)' in text
+    assert '不含接近和首次对齐' in text and 'N0=max(1,2√A/W)=12.0' in text
+    assert '补边布局：NONE' in text and '工程偏好' in text
+    import csv
+    with (directory/'analysis/planning_objectives.csv').open() as stream:
+        rows=list(csv.DictReader(stream))
+    assert len(rows)==4 and rows[-1]['raw_value']=='4' and rows[-1]['weight']=='0.15'
+    assert rows[-1]['weighted_cost']=='0.0375' and rows[-1]['normalized_cost']==''
+    assert path.read_bytes()==before
 
 def test_adaptive_width_outside_legacy_limits_uses_same_partition_for_map_and_report(tmp_path):
     from test_coverage_quality import make_run

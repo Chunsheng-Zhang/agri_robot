@@ -72,51 +72,8 @@ class StraightRouter:
         return sum(math.dist(u,v) for u,v in zip(p,p[1:]))
 
 
-def working_rows(field, width, angle, variant=0):
-    import fields2cover as f
-    swaths=f.Swaths()
-    for cell in pieces(field):
-        part=f.SG_BruteForce().generateSwaths(float(angle),float(width),field_cell(cell,f))
-        for i in range(part.size()):swaths.push_back(part[i])
-    if not swaths.size():raise ValueError('安全地头内缩后没有可用作业行')
-    if swaths.size()>1500:raise ValueError('作业行数量超过1500条预算')
-    ordered=f.RP_Boustrophedon().genSortedSwaths(swaths,variant)
-    return [((s.startPoint().getX(),s.startPoint().getY()),
-             (s.endPoint().getX(),s.endPoint().getY())) for s in ordered]
-
-
-def improve_rows(rows, router, check, entry=None):
-    """Bounded 2-opt over nearby rows; every working row is still visited once."""
-    best=list(rows);changes=0
-    for _ in range(2):
-        improved=False
-        for i in range(max(0,len(best)-1)):
-            check()
-            for j in range(i+1,min(len(best),i+5)):
-                old=new=0.
-                if not i and entry is not None:
-                    old+=router.distance(entry,best[i][0])
-                    new+=router.distance(entry,best[j][1])
-                if i:
-                    old+=router.distance(best[i-1][1],best[i][0])
-                    new+=router.distance(best[i-1][1],best[j][1])
-                if j+1<len(best):
-                    old+=router.distance(best[j][1],best[j+1][0])
-                    new+=router.distance(best[i][0],best[j+1][0])
-                if new+1e-5<old:
-                    best[i:j+1]=[(b,a) for a,b in reversed(best[i:j+1])]
-                    changes+=1;improved=True;break
-        if not improved:break
-    return best,changes
-
-
-def compose(rows, router, spacing, check):
-    vertices=[]
-    for a,b in rows:
-        check()
-        if vertices:vertices.extend(router.route(vertices[-1],a)[1:])
-        else:vertices.append(a)
-        vertices.append(b)
+def sample_path(vertices, spacing, check):
+    """Resample the supplied route; never replace native connections."""
     clean=[]
     for p in vertices:
         if not clean or math.dist(clean[-1],p)>1e-6:clean.append(p)
@@ -140,4 +97,4 @@ def compose(rows, router, spacing, check):
             points.append((*b,yaw) if i==count else
                 (a[0]+t*(b[0]-a[0]),a[1]+t*(b[1]-a[1]),yaw))
     if len(points)<2:raise ValueError('原地转向路径没有有效行驶段')
-    return points,vertices,{'swath_count':len(rows),'point_turn_count':len(point_turn_indices(points))}
+    return points,vertices,{'point_turn_count':len(point_turn_indices(points))}
