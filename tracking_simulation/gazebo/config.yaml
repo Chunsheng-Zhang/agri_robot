@@ -1,0 +1,25 @@
+# 与 ../config.yaml 的控制器/初始误差/反馈周期共用；这里仅定义物理层。
+physics:
+  step_size: 0.001
+  real_time_factor: 2.0
+  settle_time: 1.0
+  feedback_delay: 0.0
+  feedback_timeout: 0.5
+  wall_timeout: 900.0
+vehicle:
+  # 轮距/轴距来自 X3 URDF；质量、轮径、摩擦和电机参数为未标定工程初值。
+  body_mass: 1.8
+  body_length: 0.24
+  body_width: 0.14
+  body_height: 0.06
+  base_height: 0.082
+  wheel_mass: 0.052
+  wheel_radius: 0.04
+  wheel_width: 0.025
+  wheelbase: 0.16
+  wheel_separation: 0.169
+  wheel_z: -0.039
+  max_wheel_torque: 0.2
+  max_wheel_acceleration: 1.0
+  friction_longitudinal: 1.0
+  friction_lateral: 0.15

@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.16)
+project(agri_tracking_gazebo_support LANGUAGES CXX)
+find_package(gazebo REQUIRED)
+add_library(agri_gazebo_console SHARED native/console_path.cpp)
+target_compile_features(agri_gazebo_console PRIVATE cxx_std_17)
+target_include_directories(agri_gazebo_console PRIVATE ${GAZEBO_INCLUDE_DIRS})
+target_link_directories(agri_gazebo_console PRIVATE ${GAZEBO_LIBRARY_DIRS})
+target_link_libraries(agri_gazebo_console PRIVATE ${GAZEBO_LIBRARIES})
