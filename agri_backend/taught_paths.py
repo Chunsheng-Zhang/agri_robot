@@ -4,6 +4,7 @@ import math
 import re
 import uuid
 from pathlib import Path
+from typing import Literal
 from statistics import median
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -24,6 +25,7 @@ class ProcessingParameters(BaseModel):
 
 class FollowingParameters(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
+    controller_algorithm: Literal['pp', 'stanley', 'lqr', 'mpc'] = 'pp'
     lookahead: float = Field(default=0.5, ge=0.1, le=3.)
     speed: float = Field(default=0.1, ge=0.02, le=1.)
     max_angular: float = Field(default=0.5, ge=0.05, le=1.)

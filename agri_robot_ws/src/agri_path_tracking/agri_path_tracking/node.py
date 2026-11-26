@@ -1,5 +1,6 @@
 import math
 from time import monotonic
+from numpy.linalg import LinAlgError
 
 from geometry_msgs.msg import PoseStamped, Vector3Stamped
 from nav_msgs.msg import Path
@@ -11,6 +12,7 @@ from agri_base.runtime import TaskNode, run, yaw_of
 from agri_base.recording import open_recording
 from .controller import Polyline, validate_velocity_limit
 from .coverage import CoverageController, AlignmentTimeout
+from .algorithms import validate_algorithm, controller_metadata, ControllerFault, LABELS
 from agri_base.path_geometry import directed_poses, point_turn_indices
 from agri_base.path_geometry import motion_signature
 
@@ -20,7 +22,8 @@ class PathTracker(TaskNode):
         self.following = following
         self.reference_topic = '/following/reference_path' if following else '/reference_path'
         super().__init__('path_follower' if following else 'path_tracker', 'following' if following else 'tracking')
-        defaults = {'lookahead': 0.8, 'speed': 0.2, 'max_angular': 1.0,
+        defaults = {'controller_algorithm': 'pp',
+                    'lookahead': 0.8, 'speed': 0.2, 'max_angular': 1.0,
                     'completion_tolerance': 0.2, 'search_window': 1.0,
                     'start_tolerance': 0.8, 'max_path_error': 2.0,
                     'alignment_tolerance': math.radians(10), 'alignment_hold_time': 0.5,
@@ -32,6 +35,8 @@ class PathTracker(TaskNode):
                 finite_positive(self.get_parameter(name).value, name)
         for name in ('speed', 'max_angular'):
             validate_velocity_limit(name, self.get_parameter(name).value)
+        validate_algorithm(self.get_parameter('controller_algorithm').value)
+        self.controller_compute_ms = None
         if self.get_parameter('alignment_tolerance').value >= math.pi / 2:
             raise ValueError('alignment_tolerance must be less than pi/2')
         self.pending_path = None
@@ -58,6 +63,8 @@ class PathTracker(TaskNode):
             return result
         try:
             for parameter in parameters:
+                if parameter.name == 'controller_algorithm':
+                    validate_algorithm(parameter.value)
                 if parameter.name in ('speed', 'max_angular'):
                     validate_velocity_limit(parameter.name, parameter.value)
                 if parameter.name == 'alignment_tolerance' and parameter.value >= math.pi / 2:
@@ -130,10 +137,13 @@ class PathTracker(TaskNode):
         if math.hypot(p.x, p.y) > self.frame.max_radius:
             raise ValueError('Robot outside configured local operating radius')
         self.controller = CoverageController(line, (p.x, p.y),
+            controller_algorithm=self.get_parameter('controller_algorithm').value,
+            controller_dt=1 / self.get_parameter('control_rate').value,
             start_tolerance=self.get_parameter('start_tolerance').value,
             **{name: self.get_parameter(name).value for name in (
             'lookahead', 'speed', 'max_angular', 'completion_tolerance', 'search_window',
             'alignment_tolerance', 'alignment_hold_time', 'alignment_max_angular', 'alignment_timeout')})
+        self.controller_compute_ms = None
         self.trajectory.poses = []
         self.lateral_error, self.heading_error = None, None
         self.last_plot = -math.inf
@@ -154,6 +164,7 @@ class PathTracker(TaskNode):
                 self.record_file, self.record_writer = open_recording(folder, 'track', self.frame, points,
                     ['stamp', 'x', 'y', 'yaw', 'cross_track', 'heading_error', 'progress', 'direction'],
                     task_type='taught_path_tracking' if self.following else 'coverage_tracking',
+                    tracking_controller=controller_metadata(self.get_parameter('controller_algorithm').value),
                     allow_reverse=self.get_parameter('allow_reverse').value,
                     segment_directions=directions,
                     point_turn_indices=stops,
@@ -196,10 +207,21 @@ class PathTracker(TaskNode):
             recording_phase = self.controller.phase
             try:
                 stamp = self.odom.header.stamp
+                tracker = self.controller.tracker
+                if hasattr(tracker, 'set_speed_feedback'):
+                    tracker.set_speed_feedback(self.odom.twist.twist.linear.x)
+                started = monotonic()
                 v, w, distance, lateral, heading, done = self.controller.command(
                     pose.position.x, pose.position.y, yaw,
                     sample_stamp=stamp.sec + stamp.nanosec * 1e-9)
-            except AlignmentTimeout as exc:
+                self.controller_compute_ms = (monotonic() - started) * 1000
+                if self.controller_compute_ms > 200:
+                    raise ControllerFault('Tracking controller computation exceeded 200 ms')
+                if not all(math.isfinite(value) for value in (v, w, distance, lateral, heading)):
+                    raise ControllerFault('Non-finite tracking controller output')
+                if abs(v) > 1.0 + 1e-9 or abs(w) > self.get_parameter('max_angular').value + 1e-9:
+                    raise ControllerFault('Tracking controller exceeded velocity limits')
+            except (ValueError, ArithmeticError, LinAlgError) as exc:
                 self.finish('FAULT', str(exc))
                 self.publish_status()
                 return
@@ -266,6 +288,12 @@ class PathTracker(TaskNode):
         # A state-only first message must not masquerade as completed approach.
         controller = self.controller
         super().publish_status(
+            controller_algorithm=(controller.tracker.algorithm_id if controller else
+                                  self.get_parameter('controller_algorithm').value),
+            controller_label=LABELS[controller.tracker.algorithm_id if controller else
+                                    self.get_parameter('controller_algorithm').value],
+            controller_compute_ms=self.controller_compute_ms,
+            controller_optimization_unconverged=getattr(controller.tracker, 'optimization_unconverged', 0) if controller else 0,
             lateral_error=self.lateral_error, heading_error=self.heading_error,
             reference_fingerprint=self.reference_fingerprint if self.pending_path else None,
             phase=controller.phase if controller else 'IDLE',

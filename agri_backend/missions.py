@@ -19,14 +19,16 @@ DELETABLE_RUN_STATES = frozenset(('COMPLETED', 'CANCELED', 'FAILED', 'FAULT', 'R
 try:
     from agri_base.coordinates import LocalFrame
     from agri_path_planning.field import field_from_data
+    from agri_path_tracking.algorithms import controller_metadata
 except ModuleNotFoundError as exc:
-    if exc.name not in ('agri_base', 'agri_path_planning'):
+    if exc.name not in ('agri_base', 'agri_path_planning', 'agri_path_tracking'):
         raise
     # Offline document editing reuses exactly the core conversion implementation.
-    for package in ('agri_base', 'agri_path_planning'):
+    for package in ('agri_base', 'agri_path_planning', 'agri_path_tracking'):
         sys.path.insert(0, str(ROOT / 'agri_robot_ws/src' / package))
     from agri_base.coordinates import LocalFrame
     from agri_path_planning.field import field_from_data
+    from agri_path_tracking.algorithms import controller_metadata
 
 
 def now():
@@ -95,6 +97,7 @@ class SmartPlanningParameters(StrictModel):
 
 
 class CoverageParameters(SmartPlanningParameters):
+    controller_algorithm: Literal['pp', 'stanley', 'lqr', 'mpc'] = 'pp'
     robot_width: float = Field(default=0.2, ge=0.05, le=20)
     robot_length: float = Field(default=0.45, ge=0.05, le=20)
     rotation_safety_margin: float = Field(default=0.05, ge=0, le=5)

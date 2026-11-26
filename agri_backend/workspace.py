@@ -22,6 +22,7 @@ from .coverage_quality_jobs import PlanQualityJobs, snapshot as quality_snapshot
 from .coverage_map import CoverageMaps
 from .saved_plans import SavedPlans, read_plan
 from agri_base.modes import WORK_MODES, MODE_SOURCE, AUTONOMOUS_SOURCES, WorkMode
+from .missions import controller_metadata
 
 
 class ManualCommand(StrictModel):
@@ -396,8 +397,13 @@ class Workspace:
                 if mission.get('entry'):
                     # Entry validates the planned start, never routes the robot to the entry.
                     read_plan(self.store,mission,run['id'],allow_pending_save=True)
-                gateway.parameters('path_tracker', {**tracker, 'allow_reverse':bool(p.get('allow_reverse',False)),
+                gateway.parameters('path_tracker', {**tracker,
+                    'controller_algorithm':p.get('controller_algorithm','pp'),
+                    'allow_reverse':bool(p.get('allow_reverse',False)),
                     'trajectory_directory': str(directory / 'tracks')})
+                run['controller_algorithm'] = p.get('controller_algorithm','pp')
+                atomic_json(directory/'config/tracking_controller.json',
+                            controller_metadata(run['controller_algorithm']))
                 source = 'tracking'
             else:
                 run = self.store.create_run(mission, safety['mode_revision'], 'execution')

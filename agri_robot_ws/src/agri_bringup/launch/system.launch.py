@@ -106,9 +106,11 @@ def nodes(context):
                        parameters=[params, {'waypoints_file': value('waypoints_file'),
                                             'trajectory_directory': value('trajectory_directory')}], output='screen'))
     result.append(Node(package='agri_path_tracking', executable='path_tracker',
-                       parameters=[params, {'trajectory_directory': value('trajectory_directory')}], output='screen'))
+                       parameters=[params, {'trajectory_directory': value('trajectory_directory')}],
+                       additional_env={'OPENBLAS_NUM_THREADS':'1','OMP_NUM_THREADS':'1','MKL_NUM_THREADS':'1'}, output='screen'))
     result.append(Node(package='agri_path_tracking', executable='path_follower',
-                       parameters=[params, {'trajectory_directory': value('trajectory_directory')}], output='screen'))
+                       parameters=[params, {'trajectory_directory': value('trajectory_directory')}],
+                       additional_env={'OPENBLAS_NUM_THREADS':'1','OMP_NUM_THREADS':'1','MKL_NUM_THREADS':'1'}, output='screen'))
     if enabled('start_planner'):
         result += [
             Node(package='opennav_coverage', executable='opennav_coverage',

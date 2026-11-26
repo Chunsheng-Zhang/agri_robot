@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from .devices import device_cache, service_call
 from .missions import ROOT, atomic_json
 from .taught_paths import FollowingParameters, ProcessingParameters, TaughtPathStore
+from .missions import controller_metadata
 
 BUSY = ('ACQUIRING','RUNNING','PAUSED')
 
@@ -436,6 +437,8 @@ def install_routes(app, require_bridge):
             try:
                 gateway.parameters('path_follower',{**body.model_dump(),'allow_reverse':value['processing']['allow_reverse'],
                     'trajectory_directory':str(directory/'tracks')})
+                run['controller_algorithm'] = body.controller_algorithm
+                atomic_json(directory/'config/tracking_controller.json',controller_metadata(body.controller_algorithm))
                 gateway.recorder.begin(directory,'following')
                 capture = True
                 requested = monotonic()

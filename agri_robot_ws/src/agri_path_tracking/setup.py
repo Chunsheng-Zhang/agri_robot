@@ -10,7 +10,7 @@ setup(
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
         ('share/' + package_name + '/config', glob('config/*.yaml')),
     ],
-    install_requires=['setuptools'], zip_safe=True,
+    install_requires=['setuptools', 'numpy'], zip_safe=True,
     maintainer='zhang', maintainer_email='1721395658@qq.com',
     description='RTK/INS agricultural navigation', license='Apache-2.0',
     entry_points={'console_scripts': ["path_tracker = agri_path_tracking.node:main", "path_follower = agri_path_tracking.node:following_main"]},

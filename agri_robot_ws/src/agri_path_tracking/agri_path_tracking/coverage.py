@@ -4,7 +4,8 @@ from time import monotonic
 
 from agri_base.coordinates import finite_positive, wrap_angle
 from agri_waypoint.controller import WaypointController
-from .controller import Polyline, PurePursuit
+from .controller import Polyline
+from .algorithms import make_tracker
 
 
 class AlignmentTimeout(ValueError):
@@ -14,11 +15,12 @@ class AlignmentTimeout(ValueError):
 class CoverageController:
     def __init__(self, path, start, start_tolerance=0.8,
                  alignment_tolerance=math.radians(10), alignment_hold_time=0.5,
-                 alignment_max_angular=0.3, alignment_timeout=30.0, **tracking):
+                 alignment_max_angular=0.3, alignment_timeout=30.0,
+                 controller_algorithm='pp', controller_dt=.05, **tracking):
         finite_positive(start_tolerance, 'start_tolerance')
         if not all(math.isfinite(v) for v in start):
             raise ValueError('Invalid approach start position')
-        self.tracker = PurePursuit(path, **tracking)
+        self.tracker = make_tracker(path, controller_algorithm, controller_dt, **tracking)
         self.path = path
         self.target = path.points[0]
         self.start = tuple(start)
