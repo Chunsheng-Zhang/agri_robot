@@ -232,6 +232,8 @@ mgx23_ws/data/**
 /data/taught_paths/
 /data/paths/coverage_*.json
 
+# Local MCU firmware reference sources are not project runtime code.
+/Rosmaster_V3.5.1
+
 # Keep the root project instructions and persistent user requirements versionable.
 !/AGENTS.md
-
