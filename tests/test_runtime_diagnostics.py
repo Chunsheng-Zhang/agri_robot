@@ -69,7 +69,11 @@ def test_tap_calls_the_same_port_once_observes_only_written_bytes_and_preserves_
 
 
 def test_vendor_library_is_unchanged_and_motion_bytes_match_without_observer(monkeypatch):
-    source=ROOT/'yahboomcar_ros2_ws/software/py_install_V3.3.1/Rosmaster_Lib/Rosmaster_Lib.py'
+    # Vendor installs may live next to the project; use the real library if
+    # available, otherwise the existing in-project vendor copy. Never edit it.
+    relative='yahboomcar_ros2_ws/software/py_install_V3.3.1/Rosmaster_Lib/Rosmaster_Lib.py'
+    source=next(p for p in (ROOT/relative,ROOT.parent/relative,
+        ROOT/'robot_sim/src/Rosmaster_Lib/Rosmaster_Lib.py') if p.is_file())
     before=source.read_bytes();fake_module=SimpleNamespace(Serial=FakeSerial)
     monkeypatch.setitem(sys.modules,'serial',fake_module)
     spec=importlib.util.spec_from_file_location('vendor_rosmaster_observation_test',source)
