@@ -101,6 +101,8 @@ def test_queue_drop_event_memory_is_bounded_but_total_is_preserved(tmp_path):
 def test_analysis_four_plots_separates_phases_and_uses_real_speed_samples(tmp_path, monkeypatch):
     monkeypatch.setenv('MPLCONFIGDIR', str(tmp_path / 'mpl'))
     prepared_run(tmp_path)
+    from agri_path_tracking.algorithms import controller_metadata
+    atomic_json(tmp_path/'config/tracking_controller.json',controller_metadata('mpc'))
     atomic_json(tmp_path / 'tracks/alignment_test.json', {'projection': ORIGIN, 'frame_id': 'map'})
     (tmp_path / 'tracks/alignment_test.csv').write_text(
         'stamp,x,y,yaw,target_yaw,heading_error,progress\n99.5,0,0,1,0,-1,0\n')
@@ -112,6 +114,7 @@ def test_analysis_four_plots_separates_phases_and_uses_real_speed_samples(tmp_pa
     session.put('raw', '/mgx23/raw', ([100000000003,103,103], packet(b'raw-received', 1)))
     finish(session)
     result = analyze_run(tmp_path)
+    assert result['tracking_controller']['algorithm'] == 'mpc'
     assert result['phases']['tracking']['cross_track_m']['mae'] == pytest.approx(1/12)
     assert result['phases']['tracking']['heading_error_rad']['mae'] == pytest.approx(1/6)
     assert result['phases']['approach']['heading_error_rad']['mae'] == 2
@@ -132,6 +135,7 @@ def test_analysis_four_plots_separates_phases_and_uses_real_speed_samples(tmp_pa
         assert (tmp_path/'analysis'/name).stat().st_size > 10000
     assert (tmp_path/'analysis/communication_plot_data.json').is_file()
     report = (tmp_path / 'analysis/report.md').read_text()
+    assert '跟踪算法：MPC' in report
     assert '本轮实验结果汇总' in report and '横向均值 cm' in report
     assert '全部正式跟踪 | 3' in report
     assert '未测' in report and '不是 IP 丢包率' in report

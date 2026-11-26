@@ -180,7 +180,18 @@ def analyze_run(directory):
         'data':'communication_plot_data.json','time_origin_ros_s':plot_data['time_origin_ros_s'],
         'time_origin_reference':plot_data['time_origin_reference'],
         'loss_window_s':plot_data['loss_window_s'],'latency_window_s':plot_data['latency_window_s']}
+    controller_file = directory/'config/tracking_controller.json'
+    tracking_controller = None
+    if controller_file.exists():
+        try:
+            tracking_controller = json.loads(controller_file.read_text())
+            if not isinstance(tracking_controller, dict) or not isinstance(tracking_controller.get('algorithm'), str):
+                raise ValueError('Missing tracking controller identity')
+        except (ValueError, OSError) as exc:
+            tracking_controller = None
+            notes.append(f'跟踪算法配置读取失败，算法未确认：{exc}')
     metrics = {'schema_version': 2, 'run_id': run['id'], 'generated_at': now(),
+        'tracking_controller': tracking_controller,
         'task_state': terminal.get('state', run['state']), 'mode': run['mode'],
         'projection': run['projection'], 'position_reference': 'base_link', 'sources': sources,
         'reference_points': len(reference),

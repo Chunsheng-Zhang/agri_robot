@@ -139,6 +139,7 @@ def fmt(value, scale=1, digits=3):
 def write_summary(directory, mission, metrics):
     assessment=metrics['tracking_assessment'];communication=metrics['communication']
     lines=['# 本轮实验结果汇总','',f'- 运行编号：`{metrics["run_id"]}`',
+           '- 跟踪算法：'+str((metrics.get('tracking_controller') or {}).get('label') or '未记录（历史任务或非路径跟踪任务）'),
            f'- 任务：{str(mission.get("name", "未命名")).replace(chr(10), " ")}；模式：`{metrics["mode"]}`',
            f'- 最终记录状态：`{metrics["task_state"]}`；该状态不等于整块地作业覆盖率或独立精度验证。',
            '- 结束原因：'+str((metrics['capture'].get('terminal') or {}).get('reason') or '未记录额外原因').replace(chr(10),' '),
