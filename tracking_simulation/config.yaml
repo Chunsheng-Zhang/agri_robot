@@ -1,0 +1,50 @@
+# 路径相对于本配置文件；速度/角速度输出分别为m/s和rad/s。
+path: paths/coverage_20261105_125347_567395.json
+controllers: [pp, stanley, lqr, mpc]
+
+simulation:
+  lookahead: 0.8
+  speed: 0.5
+  max_angular: 1.0
+  completion_tolerance: 0.1
+  search_window: 1.0
+  dt: 0.05
+  duration: null
+  initial_lateral: 0.1
+  initial_heading_deg: 5.0
+  feedback_period: 0.1
+  position_noise: 0       # x/y各自零均值高斯噪声标准差，m；0关闭
+  heading_noise_deg: 0    # 航向高斯噪声标准差，度；工程初值，0关闭
+  actuator_linear_tau: 0 # 线速度一阶响应时间常数，s；0关闭
+  actuator_angular_tau: 0 # 角速度一阶响应时间常数，s；0关闭
+  seed: 0
+
+# 下列为初始工程参数，不是已完成实车标定或最优整定的参数。
+tuning:
+  pp:
+    # Ld = simulation.lookahead + lookahead_gain * |速度反馈|。
+    # 机器人无前轮转向；虚拟转角转换为 omega = v*tan(delta)/wheelbase。
+    lookahead_gain: 0.35
+    wheelbase: 0.16
+    rear_offset: 0.0  # 控制点与base_link重合；不沿用参考乘用车1.6m偏移
+    max_steer_deg: 35.0
+  stanley:
+    cross_track_gain: 1.0
+    heading_gain: 2.0
+    softening_speed: 0.1
+  lqr:
+    lateral_weight: 8.0
+    heading_weight: 3.0
+    angular_weight: 0.5
+  mpc:
+    lateral_weight: 8.0
+    heading_weight: 3.0
+    angular_weight: 0.2
+    terminal_multiplier: 2.0
+    horizon: 20
+    max_iterations: 200
+
+animation:
+  enabled: true
+  max_frames: 90
+  fps: 10

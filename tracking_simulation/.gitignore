@@ -1,0 +1,42 @@
+# 仿真输出及运行缓存（含CSV、指标JSON、图表、GIF和配置快照）
+/results/
+/.cache/
+/paths/
+
+# Python字节码与工具缓存，适用于各级子目录
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# 本地测试覆盖率产物
+.coverage
+.coverage.*
+/htmlcov/
+/coverage.xml
+
+# 如在此目录单独创建虚拟环境，不提交依赖安装文件
+/.venv/
+/venv/
+
+# 日志、临时文件和编辑器备份
+*.log
+*.log.*
+*.tmp
+*.bak
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 兼容旧脚本将生成图写入源码目录的情况，仅匹配已知产物名
+/controller_*.png
+/controller_*.gif
+/four_controler/controller_*.png
+/four_controler/controller_*.gif
+
+# 不全局忽略JSON/YAML/CSV或图片，保留配置、测试样例及文档插图的可提交性。
+# paths/输入按当前项目约定仅留在本机；results/和.cache/同样按目录规则忽略。
