@@ -172,6 +172,15 @@ ros2 run agri_path_tracking path_tracker --ros-args \
 
 ## 测试
 
+仅验证路径跟踪算法、不启动 ROS/Web/硬件时，使用独立的 [`tracking_simulation/`](../tracking_simulation/README.md)：
+
+```bash
+cd /home/zhang/agri_robot
+bash tracking_simulation/run.bash --ideal --controller all
+```
+
+工具使用独立仿真文件中的PP/Stanley/LQR/MPC四种跟踪器，不修改实车控制器；`--ideal`仅在本轮关闭观测噪声及附加执行响应，保持初始误差。输入为本机准备的米制路径JSON，结果位于`tracking_simulation/results/ideal_<路径名>_<时间>/`，包含轨迹、误差、速度图、CSV及统计JSON，不代表实车精度。Gazebo物理入口另见仿真说明；源码中的路径几何、分段状态和统计工具仍复用已有项目包。
+
 算法与协议单元测试（不启动 DDS）：
 
 ```bash
