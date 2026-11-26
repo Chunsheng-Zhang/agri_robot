@@ -5,9 +5,22 @@ const fs=require('node:fs'),path=require('node:path')
 const root=path.resolve(__dirname,'..'),deps=[path.join(root,'agri_web')]
 const dependency=n=>require(require.resolve(n,{paths:deps}))
 const vue=dependency('vue'),ts=dependency('typescript'),{parse}=dependency('@vue/compiler-sfc')
+const controllerFields={}
+new Function('exports',ts.transpileModule(fs.readFileSync(path.join(root,'agri_web/src/components/tasks/taskParameters.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText)(controllerFields)
+
+test('coverage and following offer exactly the four migrated algorithms, never the old PP',()=>{
+  const choices=controllerFields.trackingControllerChoices
+  assert.deepEqual(Object.keys(choices),['pp','stanley','lqr','mpc'])
+  const selection=controllerFields.parameterFields.coverage.find(field=>field.key==='controller_algorithm')
+  assert.deepEqual(selection.choices,choices)
+  assert.equal(controllerFields.parameterFields.waypoint.some(field=>field.key==='controller_algorithm'),false)
+  const view=fs.readFileSync(path.join(root,'agri_web/src/views/FollowingView.vue'),'utf8')
+  assert.match(view,/v-model="tracking.controller_algorithm" :disabled="active\|\|busy"/)
+})
 function fixture(){
   const calls=[],mounted=[],unmounted=[],responses=[],errors=[],devices=vue.ref({safety:{mode:'base',motion_inhibited:false}}),safetyFresh=vue.ref(true)
   const modules={
+    '../components/tasks/taskParameters':controllerFields,
     vue:{...vue,onMounted:f=>mounted.push(f),onUnmounted:f=>unmounted.push(f)},
     'element-plus':{ElMessage:{success:()=>{},error:e=>errors.push(e)},ElMessageBox:{confirm:async()=>{},prompt:async()=>({value:'新名称'})}},
     '../api/following':{getFollowing:()=>new Promise((resolve,reject)=>responses.push({resolve,reject})),getTaughtPath:async id=>({id,name:'路径',points:[{x:0,y:0}],reference_fingerprint:'ack'}),followingRequest:async(...args)=>calls.push(args),
@@ -15,7 +28,7 @@ function fixture(){
     '../composables/useRealtime':{useRealtime:()=>({devices,safetyFresh}),numberText:String,taskText:String},'../api/http':{apiUrl:x=>x},
   }
   const {descriptor}=parse(fs.readFileSync(path.join(root,'agri_web/src/views/FollowingView.vue'),'utf8'))
-  const names=['context','selected','busy','received','now','fresh','controllerFresh','canEdit','canImport','importFile','name','processing','mapRaw','mapTrack','filteredPaths','query','selectedLoaded','refresh','choose','start','recordStart','operate','rename','remove']
+  const names=['context','selected','busy','received','now','fresh','controllerFresh','canEdit','canImport','importFile','name','processing','tracking','active','mapRaw','mapTrack','filteredPaths','query','selectedLoaded','refresh','choose','start','recordStart','operate','rename','remove']
   const code=ts.transpileModule(`${descriptor.scriptSetup.content}\nreturn {${names.join(',')}}`,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const scope=vue.effectScope();let state
   scope.run(()=>state=new Function('require','exports',code)(n=>n.endsWith('.vue')?{}:modules[n],{}))
@@ -25,6 +38,28 @@ function fixture(){
 }
 test('opening the following page does not switch mode, acquire control, load or start',()=>{
   const f=fixture();assert.equal(f.calls.length,0);assert.equal(f.mounted.length,1);assert.equal(f.state.canEdit.value,true);f.stop()
+})
+test('the selected algorithm is sent on explicit start; active and paused tasks cannot restart',async()=>{
+  const f=fixture()
+  assert.equal(f.state.tracking.controller_algorithm,'pp')
+  f.devices.value.safety.mode='following'
+  await f.state.choose({id:'p',state:'READY'})
+  for(const algorithm of ['pp','stanley','lqr','mpc']){
+    f.state.tracking.controller_algorithm=algorithm
+    const pending=f.state.start()
+    await new Promise(resolve=>setImmediate(resolve))
+    assert.equal(f.calls.at(-1)[0],'start')
+    assert.equal(f.calls.at(-1)[1].controller_algorithm,algorithm)
+    f.responses.at(-1).resolve(f.data());await pending
+  }
+  const before=f.calls.length
+  for(const state of ['RUNNING','PAUSED','ACQUIRING']){
+    f.state.context.value.status.state=state
+    assert.equal(f.state.active.value,true)
+    await f.state.start()
+  }
+  assert.equal(f.calls.length,before)
+  f.stop()
 })
 test('selecting a saved path only previews; start requires explicit load acknowledgement and following mode',async()=>{
   const f=fixture();await f.state.choose({id:'p',state:'READY'})

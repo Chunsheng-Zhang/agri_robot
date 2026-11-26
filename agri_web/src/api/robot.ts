@@ -85,6 +85,9 @@ export interface SafetySnapshot extends Snapshot {
 }
 
 export interface TaskSnapshot extends Snapshot {
+  controller_algorithm?: 'pp'|'stanley'|'lqr'|'mpc'
+  controller_label?: string
+  controller_compute_ms?: number | null
   search_progress?: {
     phase: string; stage_completed: number; stage_total: number
     evaluated_count: number; feasible_count: number; elapsed_seconds: number

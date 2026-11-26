@@ -1,5 +1,8 @@
 import type { MissionMode } from '../../api/workspace'
 export interface ParameterField { key: string; label: string; unit?: string; min?: number; max?: number; step?: number; degrees?: boolean; choices?: Record<string, string>; toggle?: boolean; hint?: string }
+export const trackingControllerChoices: Record<string, string> = {
+  pp: 'PP（速度自适应前视）', stanley: 'Stanley', lqr: 'LQR', mpc: 'MPC',
+}
 const shared: ParameterField[] = [
   { key: 'max_angular', label: '最大角速度', unit: 'rad/s', min: 0.01, max: 2, step: 0.05 },
 ]
@@ -18,6 +21,8 @@ export const parameterFields: Record<MissionMode, ParameterField[]> = {
     { key: 'distance_kp', label: '距离控制增益', min: 0.01, max: 10, step: 0.1, hint: '基础线速度=增益×目标距离，再限幅并按航向偏差减速；越大越晚开始降速' },
   ],
   coverage: [
+    { key: 'controller_algorithm', label: '路径跟踪算法', choices: trackingControllerChoices,
+      hint: '开始前选择并保存；运行或暂停期间不可切换。PP为仿真迁移版，Stanley/LQR/MPC共用停车转向和航向对齐流程。修改后需保存并重新规划或加载匹配路径' },
     { key: 'robot_width', label: '车体宽度 robot_width', unit: 'm', min: 0.05, max: 20, step: 0.01, hint: '默认0.2m；手工曲线按半车宽检查，智能原地转向按车体长宽的完整旋转包络检查。修改后保存并重新规划' },
     { key: 'robot_length', label: '车体包络长度', unit: 'm', min: 0.05, max: 20, step: 0.01, hint: '默认0.45m为估计值；填写以旋转中心为基准的车辆及随车机具包络尺寸' },
     { key: 'rotation_safety_margin', label: '原地转向安全余量', unit: 'm', min: 0, max: 5, step: 0.01, hint: '默认0.05m；智能规划按车体对角线半径加此余量设置最小安全地头' },
@@ -30,7 +35,7 @@ export const parameterFields: Record<MissionMode, ParameterField[]> = {
     { key: 'path_continuity', label: '转弯曲率形式', choices: { DUBINS: 'Dubins（前进，圆弧与直线）', DUBINS_CC: 'Dubins CC（前进，连续曲率）', REEDS_SHEPP: 'Reeds–Shepp（可前进、倒车）', REEDS_SHEPP_HC: 'Reeds–Shepp HC（可前进、倒车，混合曲率）' }, hint: '仅手工规划采用此曲线；按设定最小半径生成。Reeds–Shepp 的倒车段需要勾选允许倒车；一键优化固定原地转向' },
     { key: 'allow_reverse', label: '允许倒车', toggle: true, hint: '默认关闭；勾选并保存、重新规划后，允许执行Reeds–Shepp倒车段，换向时先停车对齐。Dubins仍只前进；现有前方180°雷达配置不保护车后方' },
     { key: 'sampling_distance', label: '路径采样间距', unit: 'm', min: 0.02, max: 1, step: 0.02 },
-    { key: 'lookahead', label: 'Pure Pursuit 前视距离', unit: 'm', min: 0.1, max: 10, step: 0.1 },
+    { key: 'lookahead', label: 'PP基础前视距离', unit: 'm', min: 0.1, max: 10, step: 0.1, hint: '仅PP采用：实际前视距离=基础值+0.35×纵向速度反馈绝对值；其余算法不使用该参数' },
     { key: 'speed', label: '目标行驶速度', unit: 'm/s', min: 0.01, max: 1, step: 0.05, hint: '目标速度大小，最大1 m/s；随转弯、换向点和终点减速。允许倒车时由路径方向决定线速度正负' },
     { key: 'max_angular', label: '最大角速度', unit: 'rad/s', min: 0.01, max: 1, step: 0.05, hint: '角速度指令在正负此值内限幅，最大允许±1 rad/s；实际输出由跟踪误差和曲率决定' },
     { key: 'completion_tolerance', label: '终点完成阈值', unit: 'm', min: 0.02, max: 2, step: 0.05 },

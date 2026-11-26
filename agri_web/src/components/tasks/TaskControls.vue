@@ -47,6 +47,7 @@ async function operate(action: 'pause' | 'resume' | 'cancel' | 'cancel_plan') {
 </script>
 <template>
   <div class="task-controls">
+    <small v-if="kind==='coverage' && isFresh(status) && status?.controller_label">实际跟踪算法：{{ status.controller_label }}</small>
     <div><strong>{{ activeRun?.name || (kind === 'waypoint' ? '多点导航任务' : '覆盖作业任务') }}<span v-if="activeRun"> · v{{ activeRun.mission_revision }}</span></strong><el-tag type="info">{{ taskText(displayState) }}</el-tag><small>{{ activeRun?.reason || status?.reason || '任务开始后在此查看反馈' }}</small><small v-if="state && state !== 'IDLE'">用时 {{ numberText(status?.elapsed_seconds, 1) }} s（含暂停）<span v-if="progress !== null"> · {{ source === 'tracking' ? '路径任务进度' : '目标点完成进度' }} {{ numberText(progress, 1) }}%</span></small></div>
     <div v-if="planningProgress" class="planning-progress" role="status" aria-live="polite">
       <strong>智能规划进度：{{ planningPhases[planningProgress.phase] || planningProgress.phase }}</strong>

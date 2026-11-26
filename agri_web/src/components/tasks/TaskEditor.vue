@@ -39,6 +39,7 @@ const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
 function copyParameters(value: Readonly<Record<string, number | string | boolean>>) {
   const result = copy(value) as Record<string, number | string | boolean>
   if (props.kind === 'coverage' && typeof result.allow_reverse !== 'boolean') result.allow_reverse = false
+  if (props.kind === 'coverage' && result.controller_algorithm == null) result.controller_algorithm = 'pp'
   delete result.optimization_min_coverage
   delete result.optimization_turns
   delete result.optimization_patterns
