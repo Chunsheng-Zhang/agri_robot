@@ -73,7 +73,7 @@ path_tracker:
     completion_tolerance: 0.2
     search_window: 1.0
     start_tolerance: 0.8
-    alignment_tolerance: 0.17453292519943295  # 10 degrees, radians
+    alignment_tolerance: 0.08726646259971647  # 5 degrees, radians
     alignment_hold_time: 0.5
     alignment_max_angular: 0.3
     alignment_timeout: 30.0
@@ -127,6 +127,7 @@ coverage_adapter:
 # Taught-road following is independent of coverage tasks.
 path_follower:
   ros__parameters:
+    alignment_tolerance: 0.08726646259971647  # 5 degrees, radians
     controller_algorithm: pp
     lookahead: 0.5
     speed: 0.1

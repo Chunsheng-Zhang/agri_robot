@@ -14,7 +14,7 @@ class AlignmentTimeout(ValueError):
 
 class CoverageController:
     def __init__(self, path, start, start_tolerance=0.8,
-                 alignment_tolerance=math.radians(10), alignment_hold_time=0.5,
+                 alignment_tolerance=math.radians(5), alignment_hold_time=0.5,
                  alignment_max_angular=0.3, alignment_timeout=30.0,
                  controller_algorithm='pp', controller_dt=.05, **tracking):
         finite_positive(start_tolerance, 'start_tolerance')

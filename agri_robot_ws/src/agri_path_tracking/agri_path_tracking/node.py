@@ -26,7 +26,7 @@ class PathTracker(TaskNode):
                     'lookahead': 0.8, 'speed': 0.2, 'max_angular': 1.0,
                     'completion_tolerance': 0.2, 'search_window': 1.0,
                     'start_tolerance': 0.8, 'max_path_error': 2.0,
-                    'alignment_tolerance': math.radians(10), 'alignment_hold_time': 0.5,
+                    'alignment_tolerance': math.radians(5), 'alignment_hold_time': 0.5,
                     'alignment_max_angular': 0.3, 'alignment_timeout': 30.0,
                     'control_rate': 20.0, 'trajectory_directory': '', 'allow_reverse': False}
         for name, value in defaults.items():

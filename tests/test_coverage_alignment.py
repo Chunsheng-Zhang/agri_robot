@@ -29,12 +29,39 @@ def test_initial_alignment_has_zero_forward_speed_and_limited_rotation():
 def test_alignment_dwell_restarts_after_heading_leaves_tolerance():
     c = controller()
     c.command(0, 0, 0, now=0)
-    assert c.command(0, 0, math.radians(11), now=.4)[1] < 0
+    assert c.command(0, 0, math.radians(6), now=.4)[1] < 0
     c.command(0, 0, 0, now=.5)
     c.command(0, 0, 0, now=.9)
     assert c.phase == 'ALIGNING'
     c.command(0, 0, 0, now=1)
     assert c.phase == 'TRACKING'
+
+
+@pytest.mark.parametrize('sign', [-1, 1])
+def test_five_degree_boundary_is_accepted_only_after_fresh_half_second_dwell(sign):
+    c = controller()
+    yaw = sign*math.radians(5)
+    assert c.alignment_tolerance == math.radians(5)
+    assert c.command(0, 0, yaw, now=0, sample_stamp=1)[:2] == (0., 0.)
+    c.command(0, 0, yaw, now=.49, sample_stamp=2)
+    assert c.phase == 'ALIGNING'
+    c.command(0, 0, yaw, now=.5, sample_stamp=3)
+    assert c.phase == 'TRACKING'
+
+
+@pytest.mark.parametrize('sign', [-1, 1])
+def test_six_degrees_no_longer_releases_tracking_at_start_or_resume(sign):
+    c = controller()
+    for offset in (0., 10.):
+        if offset:
+            c.align_for_resume()
+        for dt in (0., .6):
+            v, w, *_, done = c.command(0, 0, sign*math.radians(6), now=offset+dt)
+            assert v == 0 and sign*w < 0 and not done
+            assert c.phase == 'ALIGNING'
+        c.command(0, 0, sign*math.radians(4), now=offset+1.)
+        c.command(0, 0, sign*math.radians(4), now=offset+1.5)
+        assert c.phase == 'TRACKING'
 
 
 def test_repeated_pose_does_not_complete_alignment():
