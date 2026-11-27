@@ -19,6 +19,15 @@ HARDWARE = {'Mcnamu_driver_X3', 'yahboom_driver_monitor', 'joy_node', 'ydlidar_r
             'astra_camera_node', 'web_video_server', 'localization', 'safety',
             'chassis_adapter', 'joy_adapter', 'waypoint', 'path_tracker', 'path_follower', 'coverage_adapter',
             'coverage_server'}
+CORE_EXECUTABLES = {
+    'agri_base': ('localization', 'chassis_adapter', 'yahboom_driver_monitor',
+                  'joy_adapter', 'camera_status', 'sensor_frames'),
+    'agri_safety': ('safety',),
+    'agri_waypoint': ('waypoint',),
+    'agri_path_tracking': ('path_tracker', 'path_follower'),
+    'agri_path_planning': ('coverage_adapter',),
+    'mgx23_driver': ('mgx23_node',),
+}
 
 
 def process_info(pid):
@@ -138,6 +147,23 @@ class Project:
                 raise RuntimeError(f'缺少文件或依赖：{file}；未安装或更新任何软件。')
         if not (self.root / 'agri_robot_ws/install/setup.bash').is_file():
             raise RuntimeError('缺少已构建的 ROS 工作区，请先构建项目。')
+        self.check_core_executables()
+
+    def check_core_executables(self):
+        # Resolve the same installed prefixes as ROS launch, rather than assuming
+        # that an existing setup.bash means every new console entry is installed.
+        from ament_index_python.packages import get_package_prefix, PackageNotFoundError
+        for package, executables in CORE_EXECUTABLES.items():
+            try:
+                prefix = Path(get_package_prefix(package))
+            except PackageNotFoundError as exc:
+                raise RuntimeError(f'启动前检查失败：ROS 包 {package} 尚未安装或环境未加载；'
+                                   '请加载 scripts/setup_environment.bash 并构建对应项目包。') from exc
+            for executable in executables:
+                path = prefix / 'lib' / package / executable
+                if not path.is_file() or not os.access(path, os.X_OK):
+                    raise RuntimeError(f'启动前检查失败：ROS 入口缺失或不可执行：{path}；'
+                                       f'请重新构建项目包 {package}，本次尚未启动任何服务。')
 
     def show_urls(self):
         print('本机网页：http://127.0.0.1:5173/')

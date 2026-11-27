@@ -21,6 +21,32 @@ class Reply(io.BytesIO):
     status = 200
 
 
+@pytest.mark.parametrize('failure', [None, 'package', 'missing', 'not_executable'])
+def test_installed_core_entries_are_checked_before_services_start(tmp_path, monkeypatch, failure):
+    from ament_index_python import packages
+    for package, names in startup.CORE_EXECUTABLES.items():
+        directory=tmp_path/package/'lib'/package
+        directory.mkdir(parents=True)
+        for name in names:
+            entry=directory/name
+            entry.write_text('#!/bin/sh\nexit 0\n')
+            entry.chmod(0o755)
+    target=tmp_path/'agri_base/lib/agri_base/yahboom_driver_monitor'
+    if failure=='missing':target.unlink()
+    if failure=='not_executable':target.chmod(0o644)
+    def prefix(package):
+        if failure=='package' and package=='agri_base':
+            raise packages.PackageNotFoundError(package)
+        return str(tmp_path/package)
+    monkeypatch.setattr(packages,'get_package_prefix',prefix)
+    manager=startup.Project(tmp_path)
+    if failure is None:
+        manager.check_core_executables()
+    else:
+        with pytest.raises(RuntimeError,match='启动前检查失败'):
+            manager.check_core_executables()
+
+
 class Http:
     def __init__(self):
         self.stops = 0
