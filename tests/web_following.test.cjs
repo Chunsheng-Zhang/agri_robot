@@ -124,7 +124,7 @@ test('file import previews the saved path without loading, switching mode or sta
   const input={files:[{name:'road.csv',size:30,text:async()=>'longitude,latitude\n117,36'}],value:'chosen'}
   const pending=f.state.importFile({target:input});await new Promise(setImmediate)
   assert.equal(f.calls.length,1);assert.equal(f.calls[0][0],'import')
-  assert.equal(f.calls[0][1].processing.spacing,.1)
+  assert.deepEqual(f.calls[0][1].processing,{allow_reverse:false})
   assert.equal(f.state.selected.value.id,'imported');assert.equal(f.state.selectedLoaded.value,false)
   assert.deepEqual(f.state.mapRaw.value,[]);assert.deepEqual(f.state.mapTrack.value,[])
   f.responses[0].resolve(f.data());await pending

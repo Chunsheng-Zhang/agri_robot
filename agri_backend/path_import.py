@@ -7,9 +7,10 @@ import math
 from pathlib import Path
 
 from agri_base.coordinates import LocalFrame
+from agri_base.path_geometry import directed_poses, motion_signature, point_turn_indices
 
 from .missions import atomic_json
-from .taught_paths import process_geometry
+from .taught_paths import ProcessingParameters, ros_signature
 
 MAX_BYTES = 2 * 1024 * 1024
 MAX_POINTS = 20000
@@ -112,9 +113,43 @@ def parse_coordinates(filename, content, projection):
     return points, extension, 'map' if local else 'WGS84', supplied_yaw
 
 
+def preserve_geometry(points, parameters):
+    """Validate imported references without filtering, moving or inserting points.
+
+    Explicit turn markers remain part of the input. Unlike the legacy teaching
+    processor, a coordinate-only import cannot invent stopped-turn poses.
+    """
+    allow_reverse = ProcessingParameters(**parameters).allow_reverse
+    poses = [(p['x'], p['y'], p['yaw']) for p in points]
+    length = sum(math.dist(a[:2], b[:2]) for a, b in zip(poses, poses[1:]))
+    if length < .5:
+        raise ValueError('轨迹过短，至少需要 0.5 m 长度，不能保存')
+    clean, directions = directed_poses(poses)
+    if any(d < 0 for d in directions) and not allow_reverse:
+        raise ValueError('检测到倒车段；请勾选允许倒车后重新导入，或只使用前进轨迹')
+    stops = point_turn_indices(poses)
+    for i in range(1, len(clean)-1):
+        if directions[i-1] != directions[i] or i in stops:
+            continue
+        a, b, c = clean[i-1:i+2]
+        before = math.atan2(b[1]-a[1], b[0]-a[0])
+        after = math.atan2(c[1]-b[1], c[0]-b[0])
+        change = abs(math.atan2(math.sin(after-before), math.cos(after-before)))
+        if change > math.radians(40):
+            raise ValueError('轨迹急角缺少原地转向标记；请在文件中提供同 XY、不同入/出 yaw 的相邻点，或提供连续曲线路径；导入不会自动插点')
+    return {'points': [p.copy() for p in points], 'frame_id': 'map',
+            'fingerprint': motion_signature(poses), 'reference_fingerprint': ros_signature(poses),
+            'processing': {'mode': 'original_points', 'allow_reverse': allow_reverse},
+            'statistics': {'raw_samples': len(points), 'retained_samples': len(points),
+                           'path_points': len(points), 'length_m': length,
+                           'point_turn_count': len(stops),
+                           'reverse_segments': sum(d < 0 for d in directions),
+                           'rejected': {'nonfinite': 0, 'isolated_spike': 0, 'stationary': 0}}}
+
+
 def import_path(store, name, projection, filename, content, processing):
     points, extension, coordinates, supplied_yaw = parse_coordinates(filename, content, projection)
-    result = process_geometry(points, processing, len(points))
+    result = preserve_geometry(points, processing)
     document = store.create(name, projection, result['processing'], source_kind='import')
     directory = store.directory(document['id'])
     try:
@@ -124,7 +159,7 @@ def import_path(store, name, projection, filename, content, processing):
                       'sha256': hashlib.sha256(content.encode('utf-8')).hexdigest(),
                       'coordinate_system': coordinates, 'yaw_supplied': supplied_yaw,
                       'timing_available': False,
-                      'note': '文件坐标轨迹；未执行采样时间、速度跳点或定位空档检查；无航向时按点序推导前进航向'}
+                      'note': '保留原始点序、坐标及已提供航向，不重采样、不平滑、不按距离删点；未执行采样时间、速度跳点或定位空档检查；无航向时按点序推导前进航向'}
         path = {**result, 'schema_version': 1, 'projection': projection}
         atomic_json(directory/'path.json', path)
         store.update(document, state='READY', source_kind='import', sample_source='imported coordinate file',

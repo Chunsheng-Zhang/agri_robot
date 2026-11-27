@@ -24,7 +24,7 @@ def geo(x, y):
 
 
 def content(kind='csv'):
-    vertices = [(0,0), (1,0), (2,0), (2,1), (2,2)]
+    vertices = [(0,0), (1,0), (2,.3), (3,1), (4,2)]
     points = [geo(*p) for p in vertices]
     if kind == 'csv':
         return 'longitude,latitude\n'+'\n'.join(f'{p["longitude"]},{p["latitude"]}' for p in points)
@@ -37,7 +37,7 @@ def content(kind='csv'):
 
 
 @pytest.mark.parametrize('kind', ['csv','geojson','json','map'])
-def test_import_formats_use_fixed_origin_preserve_corner_order_and_archive_source(tmp_path, kind):
+def test_import_formats_use_fixed_origin_preserve_every_point_and_archive_source(tmp_path, kind):
     store = TaughtPathStore(tmp_path)
     text = content(kind)
     ext = 'json' if kind == 'map' else kind
@@ -46,9 +46,13 @@ def test_import_formats_use_fixed_origin_preserve_corner_order_and_archive_sourc
     assert value['projection'] == ORIGIN and value['frame_id'] == 'map'
     assert value['state'] == 'READY' and value['source_kind'] == 'import'
     assert poses[0][:2] == pytest.approx((0,0),abs=1e-6)
-    assert poses[-1][:2] == pytest.approx((2,2),abs=1e-6)
-    assert value['statistics']['length_m'] == pytest.approx(4,abs=1e-6)
-    assert len(point_turn_indices(poses)) == 1
+    assert poses[-1][:2] == pytest.approx((4,2),abs=1e-6)
+    original,_,_,_=parse_coordinates('road.'+ext,text,ORIGIN)
+    assert value['points'] == original
+    assert value['statistics']['length_m'] == pytest.approx(1+math.hypot(1,.3)+math.hypot(1,.7)+math.sqrt(2),abs=1e-6)
+    assert len(point_turn_indices(poses)) == 0
+    assert value['statistics']['raw_samples'] == value['statistics']['path_points'] == 5
+    assert value['processing'] == {'mode':'original_points','allow_reverse':False}
     assert all(d == 1 for d in directed_poses(poses)[1])
     assert all('stamp' not in p for p in value['points'])
     assert 'stamp' not in value['units']
@@ -108,10 +112,41 @@ def test_wrong_formats_and_file_limit_are_explicit(filename,text):
     with pytest.raises(ValueError):parse_coordinates(filename,text,ORIGIN)
 
 
-def test_many_output_points_are_rejected_before_resampling_allocation(tmp_path):
-    data = {'frame_id':'map','projection':ORIGIN,'points':[{'x':0,'y':0},{'x':4000,'y':0},{'x':0,'y':0}]}
-    with pytest.raises(ValueError,match='10 万'):
-        import_path(TaughtPathStore(tmp_path),'过长',ORIGIN,'long.json',json.dumps(data),{'spacing':.03})
+def test_long_reference_never_expands_to_resampled_points(tmp_path):
+    data = {'frame_id':'map','projection':ORIGIN,'points':[{'x':0,'y':0},{'x':2000,'y':0},{'x':4000,'y':0}]}
+    value = import_path(TaughtPathStore(tmp_path),'长路径',ORIGIN,'long.json',json.dumps(data),{'spacing':.03})
+    assert len(value['points']) == 3
+    assert value['statistics']['length_m'] == 4000
+
+
+def test_dense_irregular_points_and_supplied_yaw_survive_legacy_processing_options(tmp_path):
+    points = [{'x':x,'y':.01*math.sin(x),'yaw':yaw} for x,yaw in zip(
+        (0., .001, .017, .2, .9), (.05, .06, .07, .08, .09))]
+    data = {'frame_id':'map','projection':ORIGIN,'points':points}
+    value = import_path(TaughtPathStore(tmp_path),'原始数据',ORIGIN,'raw.json',json.dumps(data),
+                        {'spacing':1.,'smoothing':.1,'min_spacing':.1})
+    assert value['points'] == points
+    assert value['statistics']['retained_samples'] == len(points)
+    assert value['statistics']['rejected']['stationary'] == 0
+    assert value['import_source']['yaw_supplied']
+
+
+def test_explicit_turn_and_duplicate_points_are_preserved_without_inventing_poses(tmp_path):
+    points=[{'x':x,'y':y,'yaw':yaw} for x,y,yaw in
+            [(0,0,0),(0,0,0),(1,0,0),(1,0,math.pi/2),(1,1,math.pi/2)]]
+    data={'frame_id':'map','projection':ORIGIN,'points':points}
+    value=import_path(TaughtPathStore(tmp_path),'停车转向',ORIGIN,'turn.json',json.dumps(data),{})
+    assert value['points']==points
+    assert value['statistics']['point_turn_count']==1
+
+
+def test_missing_turn_marker_is_rejected_instead_of_rewriting_sharp_corner(tmp_path):
+    data={'frame_id':'map','projection':ORIGIN,'points':[
+        {'x':0,'y':0},{'x':1,'y':0},{'x':1,'y':1}]}
+    store=TaughtPathStore(tmp_path)
+    with pytest.raises(ValueError,match='急角缺少原地转向标记'):
+        import_path(store,'急角',ORIGIN,'turn.json',json.dumps(data),{})
+    assert not store.list()
 
 
 @pytest.fixture

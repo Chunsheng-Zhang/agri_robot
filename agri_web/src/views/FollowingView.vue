@@ -14,7 +14,7 @@ const error=ref(''), busy=ref(false), received=ref(0), now=ref(Date.now())
 const name=ref('田间道路示教')
 const query=ref('')
 const fileInput=ref<HTMLInputElement|null>(null)
-const processing=reactive<ProcessingParameters>({spacing:.1,min_spacing:.03,max_speed:1.5,max_gap:.5,smoothing:.03,allow_reverse:false})
+const processing=reactive<ProcessingParameters>({allow_reverse:false})
 const tracking=reactive<FollowingParameters>({controller_algorithm:'pp',lookahead:.5,speed:.1,max_angular:.5,completion_tolerance:.15,start_tolerance:.3,search_window:1,max_path_error:.5})
 let poll:ReturnType<typeof setInterval>|undefined, clock:ReturnType<typeof setInterval>|undefined
 let disposed=false,inflight=false,selection=0
@@ -115,8 +115,6 @@ onUnmounted(()=>{disposed=true;selection++;clearInterval(poll);clearInterval(clo
           <template #header><strong>1. 录制或导入路径</strong><el-tag>{{ taskText(context?.recording.state) }}</el-tag></template>
           <el-form label-position="top" class="parameters">
             <el-form-item label="路径名称"><el-input v-model="name" :maxlength="80" :disabled="recording||processingNow"/></el-form-item>
-            <el-form-item label="重采样间距（m）"><el-input-number v-model="processing.spacing" :min=".03" :max="1" :step=".01" :precision="2" :disabled="recording||processingNow"/></el-form-item>
-            <el-form-item label="最大平滑位移（m）"><el-input-number v-model="processing.smoothing" :min="0" :max=".1" :step=".01" :precision="2" :disabled="recording||processingNow"/></el-form-item>
             <el-form-item label="行驶方向"><el-checkbox v-model="processing.allow_reverse" :disabled="recording||processingNow||busy">录制、导入及跟随允许倒车</el-checkbox></el-form-item>
           </el-form>
           <div class="actions"><el-button type="primary" :disabled="!canEdit||!baseMode||!name.trim()" @click="recordStart">开始录制</el-button>
@@ -124,7 +122,7 @@ onUnmounted(()=>{disposed=true;selection++;clearInterval(poll);clearInterval(clo
             <el-button :disabled="!recording||busy" @click="operate('record/cancel')">取消录制</el-button>
             <el-button :disabled="!canImport||!name.trim()" @click="fileInput?.click()">导入文件</el-button>
             <input ref="fileInput" type="file" accept=".csv,.json,.geojson" hidden @change="importFile"/></div>
-          <p class="note">导入支持 CSV（表头 longitude,latitude，可选 yaw）、JSON 坐标点和 GeoJSON LineString，最多 2 MiB / 20000 点，至少 3 点及 0.5 m。坐标顺序就是行驶顺序；不是地块边界 Polygon。重采样、平滑及倒车选项同时用于导入；无 yaw 时按点序生成前进航向，有 yaw 时须为 ROS map 弧度。导入只保存并预览，不切换模式、不加载或行驶。</p>
+          <p class="note">导入支持 CSV（表头 longitude,latitude，可选 yaw）、JSON 坐标点和 GeoJSON LineString，最多 2 MiB / 20000 点，至少 3 点及 0.5 m。保留原始点数、点序、坐标及已提供航向，不重采样、不平滑、不按距离删点；经纬度按固定原点转换为 map 坐标。无 yaw 时按点序生成前进航向，有 yaw 时须为 ROS map 弧度。急角须在文件中提供同 XY、不同入/出 yaw 的停车转向标记。导入只保存并预览，不切换模式、不加载或行驶。</p>
           <p>采样 {{ context?.recording.samples||0 }} 个 · {{ numberText(context?.recording.elapsed_seconds,1) }} s</p>
           <p v-if="context?.recording.reason" class="failure">{{ context.recording.reason }}</p>
           <p class="note">基础待命模式 → 开始录制 → 按原有手柄方式行驶 → 手动停车 → 结束录制并保存。结束/取消录制只结束采样，不代替手柄停车。定位中断超过 0.5 s 会终止录制。请避免横向平移；差速底盘无法复现该动作。</p>
