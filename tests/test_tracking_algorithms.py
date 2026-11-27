@@ -119,6 +119,60 @@ def test_new_pp_speed_feedback_changes_lookahead_without_speed_pid():
         tracker.set_speed_feedback(float('nan'))
 
 
+@pytest.mark.parametrize('turn', [-1., 1.])
+def test_pp_curvature_preview_shortens_lookahead_and_matches_simulation(turn):
+    from tracking_simulation.four_controler.four_controler import PurePursuit as SimulationPP
+    points = [(math.sin(i*.02), turn*(1-math.cos(i*.02))) for i in range(120)]
+    path = Polyline(points)
+    production = make_tracker(path, 'pp', speed=.5, lookahead=.8)
+    simulation = SimulationPP(path, speed=.5, lookahead=.8)
+    for tracker in (production, simulation):
+        tracker.set_speed_feedback(.46)
+        distance = tracker.lookahead_distance(.3, 0., path.total)
+        assert tracker.preview_curvature == pytest.approx(turn, abs=.03)
+        assert distance == pytest.approx(.7688, abs=.005)
+        assert distance < .961
+    assert production.preview_curvature == simulation.preview_curvature
+    assert production.lookahead_distance(.3, 0., path.total) == simulation.lookahead_distance(.3, 0., path.total)
+
+
+@pytest.mark.parametrize('directions', [[1, 1], [1, -1]])
+def test_pp_curvature_preview_does_not_include_next_stopped_leg(directions):
+    path = Polyline([(0., 0.), (2., 0.), (2., 2.)], directions, stop_indices=[1])
+    tracker = make_tracker(path, 'pp', lookahead=.8)
+    tracker.set_speed_feedback(.4)
+    assert tracker.lookahead_distance(1.8, *tracker.leg[:2]) == pytest.approx(.94)
+    assert tracker.preview_curvature == 0.
+
+
+def test_pp_lookahead_bounds_and_new_recording_identity():
+    path = Polyline([(0., 0.), (3., 0.)])
+    tracker = make_tracker(path, 'pp', lookahead=.1)
+    assert tracker.lookahead_distance(0., 0., 3.) == .65
+    tracker = make_tracker(path, 'pp', lookahead=2.)
+    tracker.set_speed_feedback(1.)
+    assert tracker.lookahead_distance(0., 0., 3.) == 1.05
+    meta = controller_metadata('pp')
+    assert meta['implementation'] == 'agri_path_tracking.pp_speed_curvature.v2'
+    assert meta['tuning']['curvature_gain'] == .25
+    assert meta['tuning']['curvature_window'] == 1.
+    assert meta['tuning']['lookahead_min'] == .65
+    assert meta['tuning']['lookahead_max'] == 1.05
+    assert controller_metadata('lqr')['implementation'] == 'agri_path_tracking.algorithms.v1'
+
+
+@pytest.mark.parametrize('tuning', [
+    {'curvature_gain': -.1}, {'curvature_gain': float('nan')},
+    {'curvature_gain': True}, {'curvature_gain': 3.},
+    {'lookahead_min': 0.}, {'lookahead_min': 1.2, 'lookahead_max': 1.},
+    {'lookahead_max': 4.}, {'curvature_window': 0.}, {'curvature_window': 2.},
+])
+def test_invalid_adaptive_pp_parameters_are_rejected(tuning):
+    from agri_path_tracking.algorithms import PurePursuit
+    with pytest.raises(ValueError):
+        PurePursuit(Polyline([(0., 0.), (3., 0.)]), tuning=tuning)
+
+
 def test_mpc_nonconvergence_is_a_fault_not_a_command(monkeypatch):
     from agri_path_tracking import algorithms
     tracker = make_tracker(Polyline([(0,0), (4,0)]), 'mpc')

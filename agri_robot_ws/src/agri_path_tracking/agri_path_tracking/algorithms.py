@@ -14,7 +14,8 @@ from .controller import PurePursuit as PathTrackingState
 
 NAMES = ('pp', 'stanley', 'lqr', 'mpc')
 LABELS = {'pp': 'Pure Pursuit', 'stanley': 'Stanley (yaw-rate)', 'lqr': 'LQR', 'mpc': 'MPC'}
-PP_DEFAULTS = dict(lookahead_gain=.35, wheelbase=.16, rear_offset=0., max_steer_deg=35.)
+PP_DEFAULTS = dict(lookahead_gain=.35, wheelbase=.16, rear_offset=0., max_steer_deg=35.,
+                   curvature_gain=.25, lookahead_min=.65, lookahead_max=1.05, curvature_window=1.)
 DEFAULT_TUNING = {
     'pp': PP_DEFAULTS,
     'stanley': dict(cross_track_gain=1., heading_gain=2., softening_speed=.1),
@@ -53,7 +54,8 @@ def make_tracker(path, algorithm='pp', dt=.05, **settings):
 def controller_metadata(algorithm):
     validate_algorithm(algorithm)
     return {'algorithm': algorithm, 'label': LABELS[algorithm],
-            'implementation': 'agri_path_tracking.algorithms.v1',
+            'implementation': ('agri_path_tracking.pp_speed_curvature.v2' if algorithm == 'pp'
+                               else 'agri_path_tracking.algorithms.v1'),
             'tuning': deepcopy(DEFAULT_TUNING.get(algorithm, {}))}
 
 
@@ -71,9 +73,9 @@ def pure_pursuit_control(rear_x, rear_y, yaw, target_x, target_y, wheelbase, max
 
 
 class PurePursuit(PathTrackingState):
-    """Migrated speed-adaptive PP, with the existing segment-state interface."""
+    """Speed/curvature-adaptive PP, with the existing segment-state interface."""
     supports_segmented = True
-    name = 'Pure Pursuit (reference-script adaptation)'
+    name = 'Pure Pursuit (speed/curvature lookahead)'
 
     def __init__(self, path, tuning=None, **settings):
         super().__init__(path, **settings)
@@ -87,7 +89,14 @@ class PurePursuit(PathTrackingState):
                 raise ValueError('PP增益/偏移须非负，轴距和转角上限须为正')
         if self.tuning['max_steer_deg'] >= 90:
             raise ValueError('PP虚拟转角上限必须小于90度')
+        if not 0 < self.tuning['lookahead_min'] <= self.tuning['lookahead_max'] <= 3.:
+            raise ValueError('PP前视距离须满足0 < 下限 <= 上限 <= 3m')
+        if not 0 <= self.tuning['curvature_gain'] <= 2.:
+            raise ValueError('PP曲率增益须在0～2m之间')
+        if not .1 <= self.tuning['curvature_window'] <= 1.5:
+            raise ValueError('PP曲率窗口须在0.1～1.5m之间')
         self.measured_speed = 0.
+        self.preview_curvature = 0.
         self.steering_angle = 0.
         self.effective_lookahead = self.lookahead
         self.target_point = path.points[0]
@@ -96,6 +105,20 @@ class PurePursuit(PathTrackingState):
         if not math.isfinite(speed):
             raise ValueError('PP速度反馈必须为有限数值')
         self.measured_speed = float(speed)
+
+    def lookahead_distance(self, progress, lower, upper):
+        """Forward reference tangent change; never preview across a stopped turn/cusp."""
+        start = max(lower, min(upper, progress))
+        end = min(upper, start+self.tuning['curvature_window'])
+        # At an interior leg endpoint, Polyline.at(upper) belongs to the next leg.
+        tangent_end = max(lower, upper-1e-8)
+        self.preview_curvature = (
+            wrap_angle(self.path.at(min(end, tangent_end))[2]
+                       - self.path.at(min(start, tangent_end))[2])/(end-start)
+            if end-start > 1e-6 else 0.)
+        requested = (self.lookahead+self.tuning['lookahead_gain']*abs(self.measured_speed)) / (
+            1.+self.tuning['curvature_gain']*abs(self.preview_curvature))
+        return max(self.tuning['lookahead_min'], min(self.tuning['lookahead_max'], requested))
 
     def command(self, x, y, yaw):
         distance, s, lateral, body_yaw = self.error(x, y)
@@ -118,7 +141,7 @@ class PurePursuit(PathTrackingState):
         rear_y = y-self.tuning['rear_offset']*math.sin(travel_yaw)
         # Preserve bounded matching at neighboring rows and direction changes.
         _, rear_s, _, _ = self.path.project(rear_x, rear_y, self.progress, self.window, lo, hi)
-        self.effective_lookahead = self.lookahead+self.tuning['lookahead_gain']*abs(self.measured_speed)
+        self.effective_lookahead = self.lookahead_distance(rear_s,lo,hi)
         target_s = min(hi, rear_s+self.effective_lookahead)
         index = min(bisect.bisect_left(self.path.lengths, target_s),
                     bisect.bisect_left(self.path.lengths, hi), len(self.path.points)-1)

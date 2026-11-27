@@ -1,7 +1,7 @@
 import type { MissionMode } from '../../api/workspace'
 export interface ParameterField { key: string; label: string; unit?: string; min?: number; max?: number; step?: number; degrees?: boolean; choices?: Record<string, string>; toggle?: boolean; hint?: string }
 export const trackingControllerChoices: Record<string, string> = {
-  pp: 'PP（速度自适应前视）', stanley: 'Stanley', lqr: 'LQR', mpc: 'MPC',
+  pp: 'PP（速度/曲率自适应前视）', stanley: 'Stanley', lqr: 'LQR', mpc: 'MPC',
 }
 const shared: ParameterField[] = [
   { key: 'max_angular', label: '最大角速度', unit: 'rad/s', min: 0.01, max: 2, step: 0.05 },
@@ -35,7 +35,7 @@ export const parameterFields: Record<MissionMode, ParameterField[]> = {
     { key: 'path_continuity', label: '转弯曲率形式', choices: { DUBINS: 'Dubins（前进，圆弧与直线）', DUBINS_CC: 'Dubins CC（前进，连续曲率）', REEDS_SHEPP: 'Reeds–Shepp（可前进、倒车）', REEDS_SHEPP_HC: 'Reeds–Shepp HC（可前进、倒车，混合曲率）' }, hint: '仅手工规划采用此曲线；按设定最小半径生成。Reeds–Shepp 的倒车段需要勾选允许倒车；一键优化固定原地转向' },
     { key: 'allow_reverse', label: '允许倒车', toggle: true, hint: '默认关闭；勾选并保存、重新规划后，允许执行Reeds–Shepp倒车段，换向时先停车对齐。Dubins仍只前进；现有前方180°雷达配置不保护车后方' },
     { key: 'sampling_distance', label: '路径采样间距', unit: 'm', min: 0.02, max: 1, step: 0.02 },
-    { key: 'lookahead', label: 'PP基础前视距离', unit: 'm', min: 0.1, max: 10, step: 0.1, hint: '仅PP采用：实际前视距离=基础值+0.35×纵向速度反馈绝对值；其余算法不使用该参数' },
+    { key: 'lookahead', label: 'PP基础前视距离', unit: 'm', min: 0.1, max: 10, step: 0.1, hint: '仅PP采用：实际前视随速度和前方路径曲率自动调整，限定0.65～1.05 m；此处设置基础值，其余算法不使用该参数' },
     { key: 'speed', label: '目标行驶速度', unit: 'm/s', min: 0.01, max: 1, step: 0.05, hint: '目标速度大小，最大1 m/s；随转弯、换向点和终点减速。允许倒车时由路径方向决定线速度正负' },
     { key: 'max_angular', label: '最大角速度', unit: 'rad/s', min: 0.01, max: 1, step: 0.05, hint: '角速度指令在正负此值内限幅，最大允许±1 rad/s；实际输出由跟踪误差和曲率决定' },
     { key: 'completion_tolerance', label: '终点完成阈值', unit: 'm', min: 0.02, max: 2, step: 0.05 },

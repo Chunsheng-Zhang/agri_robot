@@ -74,7 +74,7 @@ bash tracking_simulation/gazebo/run.bash --controller pp
 | `/tracking_sim/localization` | `geometry_msgs/msg/PoseStamped` | 周期/噪声/延迟后的模拟定位，时间戳保留采集时刻，`map` |
 | `/clock` | `rosgraph_msgs/msg/Clock` | Gazebo 模拟时钟 |
 
-不发布 `/cmd_vel`、`/mgx23/*`、`/odom` 或 TF，不伪造 RTK FIX。保留输入路径原 `map` 米制坐标和投影；世界原点与该 map 重合，没有分别归零参考与实际轨迹。原地转向/倒车标记继续由原 `CoverageController` 状态机处理，其tracker替换为本地PP；这些路径仍仅支持 `--controller pp`。PP前视距离为基础值加`lookahead_gain×|速度反馈|`，详见上级配置的`tuning.pp`。速度反馈与定位一起采样、一起延迟交付，不将当前未延迟的物理速度泄露给延迟控制器。
+不发布 `/cmd_vel`、`/mgx23/*`、`/odom` 或 TF，不伪造 RTK FIX。保留输入路径原 `map` 米制坐标和投影；世界原点与该 map 重合，没有分别归零参考与实际轨迹。原地转向/倒车标记继续由原 `CoverageController` 状态机处理，其tracker替换为本地PP；这些路径仍仅支持 `--controller pp`。当前本地PP采用速度/参考曲率自适应前视，默认增益0.35 s/0.25 m、前视限幅0.65～1.05 m、曲率窗口1 m，详见上级配置的`tuning.pp`。速度反馈与定位一起采样、一起延迟交付，不将当前未延迟的物理速度泄露给延迟控制器。2026-11-27接入新前视后本轮仅做离线接口回归，未重新完成Gazebo物理闭环验证，早期物理验证不代表新控制律已验证。
 
 程序从 201～230 中选择未被本机进程占用的 Domain，始终排除225及继承的实车 Domain，并用文件锁避免自身重复选中。ROS 发现其他节点时拒绝运行；强制 `ROS_LOCALHOST_ONLY=1`。Gazebo 另选本机空闲端口，不接入已有世界。显式 `--domain` 也须在200～230内且通过同样检查，不允许绕过检查。
 

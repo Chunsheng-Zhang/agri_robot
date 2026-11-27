@@ -22,9 +22,13 @@ simulation:
 # 下列为初始工程参数，不是已完成实车标定或最优整定的参数。
 tuning:
   pp:
-    # Ld = simulation.lookahead + lookahead_gain * |速度反馈|。
+    # Ld = clip((基础前视 + 速度增益*|v|)/(1+曲率增益*|kappa|), 下限, 上限)。
     # 机器人无前轮转向；虚拟转角转换为 omega = v*tan(delta)/wheelbase。
     lookahead_gain: 0.35
+    curvature_gain: 0.25
+    lookahead_min: 0.65
+    lookahead_max: 1.05
+    curvature_window: 1.0
     wheelbase: 0.16
     rear_offset: 0.0  # 控制点与base_link重合；不沿用参考乘用车1.6m偏移
     max_steer_deg: 35.0

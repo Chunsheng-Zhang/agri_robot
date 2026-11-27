@@ -154,7 +154,9 @@ tracking_simulation/
 
 `tuning`集中保存控制器初始参数。Stanley的横向/航向增益、LQR的状态与控制代价、MPC的状态/控制代价及预测步数均可修改。MPC默认20步、dt=0.05 s，对应1 s预测时域；终端代价乘数为2。它们是工程初值，没有进行最佳整定。
 
-`tuning.pp`对应从`four_controler/four_controler/four_controler.py`迁入的PP：`lookahead_gain=0.35`，实际前视距离为`lookahead + lookahead_gain × |速度反馈|`；当前基础0.8 m、速度0.5 m/s时为0.975 m。`wheelbase=0.16 m`是虚拟转角换算参数，`max_steer_deg=35°`限制虚拟转角，输出使用`ω=v×tan(δ)/wheelbase`，仍受公共角速度上限约束。`rear_offset=0 m`使控制点与base_link重合；源乘用车的1.6 m质心到后轴距离不适用于这台机器人，不照搬。若设置非零偏移，则是虚拟后轴点近似，需要单独验证。旧YAML缺少`pp`时自动补齐这组默认参数。
+`tuning.pp`当前使用2026-11-27用户确认接入的速度/参考曲率自适应前视：`Ld=clip((lookahead + lookahead_gain*|速度反馈|)/(1+curvature_gain*|kappa|), lookahead_min, lookahead_max)`。默认速度增益0.35 s、曲率增益0.25 m、前视下/上限0.65/1.05 m、前方曲率窗口1 m；曲率由当前分段内参考切向变化除以弧长计算，不跨停车转向或倒车换向点。基础前视0.8 m、速度0.46 m/s时，直线约0.961 m、曲率1/m时约0.7688 m。旧YAML缺失新字段时自动补齐上述默认值，旧任务中的`lookahead`继续作为基准值，实际前视受新上下限约束。
+
+`wheelbase=0.16 m`是虚拟转角换算参数，`max_steer_deg=35°`限制虚拟转角，输出使用`ω=v×tan(δ)/wheelbase`，仍受公共角速度上限约束。`rear_offset=0 m`使控制点与base_link重合；源乘用车的1.6 m质心到后轴距离不适用于这台机器人，不照搬。若设置非零偏移，则是虚拟后轴点近似，需要单独验证。仿真控制律仍保存在本地`four_controler.py`，实车使用生产`algorithms.py`，不调用实车的command；通过配对测试核对两者输出一致。
 
 ## 路径格式与坐标
 
@@ -186,7 +188,7 @@ tracking_simulation/
 
 `x_dot=v*cos(yaw)`、`y_dot=v*sin(yaw)`、`yaw_dot=ω`；开启一阶响应时，v/ω使用响应环节输出，以不超过5 ms子步中点积分；关闭响应时保留原恒定指令精确积分。不将模型位置吸附到路径上。四种算法共用路径、初始位姿、模型、采样、噪声种子和速度上限；各自的控制律及转弯速度处理保留差异，所以实际速度曲线不一定逐点相同。正常结束记录制动过程，暂停直接清零，BRAKING样本不混入TRACKING误差统计。
 
-- **PP**：实现位于[four_controler.py](four_controler/four_controler.py)的`PurePursuit`和`pure_pursuit_control`。迁移用户参考脚本的后轴点追踪、速度相关前视、按累计距离向前选参考点，以及`δ=atan2(2L sinα, 实际目标点距离)`和转角限幅；再适配为机器人`v/ω`。保留有界进度匹配、终点停车、机器人航向获取和分段状态机；不直接照搬1500 kg车辆模型、5/10 m/s速度或2.8 m轴距。它与实车PP是不同的控制律，未改动实车实现。
+- **PP**：实现位于[four_controler.py](four_controler/four_controler.py)的`PurePursuit`和`pure_pursuit_control`。使用上述速度/参考曲率前视，保留后轴点追踪、按累计距离向前选择离散参考点，以及`δ=atan2(2L sinα, 实际目标点距离)`和转角限幅，再适配为机器人`v/ω`。有界进度匹配、终点停车、机器人航向获取和分段状态机继续生效；不直接照搬乘用车质量、速度或轴距。当前前视和普通前进控制律与实车同步，实车安全与任务链路仍由实车节点负责。
 - **Stanley**：使用横向误差的arctan项、航向反馈和参考曲率前馈，适配为base_link角速度输出。它是机器人角速度适配版本，不等同于原论文前轴测点/前轮转角形式。
 - **LQR**：状态为`[横向误差, 车辆航向−参考航向]`，输入为角速度修正量，使用小误差线性平面模型及曲率前馈；离散Riccati迭代保留原示例的方法。
 - **MPC**：同一两状态模型，预览参考航向变化，在预测优化内部约束每一步角速度。求解有界凸二次问题，执行第一项后下一周期重新优化；不再使用旧例“无约束解最后裁剪”的形式。不包含障碍约束或复杂车辆非线性。
@@ -198,6 +200,38 @@ tracking_simulation/
 未选择地面profile时，默认平面模型没有实车辨识的增益、限幅或延迟；v1/v2通过独立profile加入等效响应，v2另包含定位交付及横向关联。这些都没有独立分离真实轮胎滑移、导航误差或土壤作用，不能将结果称为实车精度，也不是Gazebo仿真。不同控制器的整定程度、前馈和速度策略也不同，默认结果不能用来证明某算法在实车或全部路径上更优。
 
 方法参考：[Pure Pursuit原报告](https://publications.ri.cmu.edu/storage/publications/pub_files/pub3/coulter_r_craig_1992_1/coulter_r_craig_1992_1.pdf)、[Stanley原论文](https://robots.stanford.edu/papers/thrun.stanley05.pdf)、[线性约束MPC示例](https://www.cvxgrp.org/scs/examples/python/mpc.html)。本实现按机器人速度接口做了上述明确的工程适配。
+
+## 速度与曲率前视的离线验证
+
+2026-11-27按用户要求，对经验公式`Ld = clip((L0 + Tv*abs(v))/(1 + K*abs(kappa)), 0.65, 1.05)`做了单因素离线验证。`K=0.25 m`为此前提出的候选值，不是论文原式或已证明的最优参数。曲率取前方固定1米参考弧长窗口的切向变化，独立于当前转向指令和可变前视。沿用原PP目标顶点选择、速度策略和控制律，没有同时加入目标插值、弯道减速或动态补偿。
+
+从项目根目录复现：
+
+```bash
+export TMPDIR="$PWD/tracking_simulation/.cache/tmp"
+export MPLCONFIGDIR="$PWD/tracking_simulation/.cache/matplotlib"
+export OPENBLAS_NUM_THREADS=1
+agri_backend/.venv/bin/python -B tracking_simulation/validate_pp_lookahead.py
+```
+
+默认生成独立的`results/pp_lookahead_<时间>/`。模型验证与对照代码在`validate_pp_lookahead.py`；实验公式在`pp_curvature_lookahead.py`。最初验证时默认四算法入口和实车PP均未启用该公式；随后用户明确要求接入，当前默认PP已启用。验证入口的`original`现在显式使用仅供离线对照的`SpeedPursuitBaseline`，保持历史速度前视基线，不能把新版默认PP误当原版对照。历史结果和实现快照保持原样；当前实车接入情况见[接入说明](../docs/2026-11-27_PP速度曲率自适应前视接入.md)。
+
+使用两次真实PP记录的参考路径、0.50 m/s任务及各自初始位姿，后续自由闭环，不回放后续实测位置。比较理想模型、冻结v2模型，以及只用第一组PP速度记录重新辨识行进角速度增益/时间常数的试验模型；其他模型参数仍继承v2。曲率增益扫描仅使用第一组条件、种子0/1，扫描完成后固定选择再评估第二组；候选网格0/0.10/0.15/0.25/0.40/0.60中选中0.25。两组实际路径早已参与问题分析，因此第二组不是前瞻性的未知实车试验，也不代表新路径泛化。
+
+在PP响应试验模型下，三个种子平均的仿真横向RMSE为：
+
+|实际起点条件|原PP|K=0.25|降低|
+|---|---:|---:|---:|
+|09:01这组|2.966 cm|2.719 cm|8.3%，约2.5 mm|
+|09:25这组|3.211 cm|2.983 cm|7.1%，约2.3 mm|
+
+这些是模型生成的误差，不是将原实车3.73/4.01cm直接改善到表中的数值。试验模型仍低估实车总体误差，也没有复现部分弯道误差的形状。第一/第二组开环角速度预测RMSE仅由v2的0.0592/0.0564降至0.0544/0.0521rad/s，不能因此宣称完整实车动力学已匹配。
+
+噪声压力场景和角响应时间常数±20%的场景也降低了总体RMSE，但改善存在代价：PP响应模型下直线核心RMSE约由1.115/1.133到1.160/1.160cm，角速度指令总变差率约增加10%；第二组全程最大误差被相同初始偏差主导，仍为13.65cm。不能把平均RMSE改善称为所有指标改善。下一步若继续优化，需单独验证曲率/前视平滑，且不能用改变速度来混淆本轮单因素效果。
+
+本轮12项新增检查、合并103项相关软件检查通过；82次离线运行全部完成，包含零增益消融、参数扫描、理想及两种响应模型、三个种子、未实测的0.03m/0.5°噪声压力和响应常数变化。重复种子、K=0消融和同路径重复条件不构成82个独立实车证据。K=0在本次前视范围内精确还原原版闭环轨迹。
+
+结果见[验证统计](results/pp_lookahead_validation_20261127/validation.json)、[误差对照图](results/pp_lookahead_validation_20261127/paired_error_comparison.png)、[系数灵敏度图](results/pp_lookahead_validation_20261127/gain_sensitivity.png)。每个PP响应模型的种子0对照保存完整CSV、指标、PNG及前视/曲率记录；原始输入读前后SHA256一致。未改实车控制器、Web或默认参数，未启动ROS/设备、行驶、升级或commit/push。
 
 ## 历史与本轮验证
 

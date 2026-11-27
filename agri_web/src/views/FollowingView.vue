@@ -146,6 +146,7 @@ onUnmounted(()=>{disposed=true;selection++;clearInterval(poll);clearInterval(clo
             <el-form-item label="终点到达阈值（m）"><el-input-number v-model="tracking.completion_tolerance" :min=".03" :max=".5" :step=".05" :disabled="active"/></el-form-item>
             <el-form-item label="路径进度搜索窗口（m）"><el-input-number v-model="tracking.search_window" :min=".1" :max="5" :step=".1" :disabled="active"/></el-form-item>
           </el-form>
+          <p v-if="tracking.controller_algorithm==='pp'" class="note">PP实际前视随速度和前方路径曲率自动调整，限定0.65～1.05 m；上方设置的是基础前视值，开始跟随后生效。</p>
           <div class="actions"><el-button :disabled="!canEdit||!followMode||!selected" @click="operate(`paths/${selected!.id}/load`)">加载此路径</el-button>
             <el-button type="success" :disabled="!canEdit||!followMode||!selectedLoaded||!safetyFresh||devices?.safety.motion_inhibited" @click="start">开始路径跟随</el-button>
             <el-button :disabled="!controllerFresh||context?.status.state!=='RUNNING'||busy" @click="operate('task/pause')">暂停</el-button>
