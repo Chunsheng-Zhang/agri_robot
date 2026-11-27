@@ -95,11 +95,13 @@ def load_path(filename):
                    'projection':document.get('projection') if isinstance(document,dict) else None}
 
 
-def integrate(x, y, yaw, v, w, dt):
+def integrate(x, y, yaw, v, w, dt, lateral=0.):
     """Exact constant-body-twist integration; no reference-path snapping."""
     half = w*dt/2
     distance = v*dt*(math.sin(half)/half if abs(half)>1e-10 else 1.)
-    return x+distance*math.cos(yaw+half), y+distance*math.sin(yaw+half), wrap_angle(yaw+w*dt)
+    sideways=lateral*dt*(math.sin(half)/half if abs(half)>1e-10 else 1.)
+    return (x+distance*math.cos(yaw+half)-sideways*math.sin(yaw+half),
+            y+distance*math.sin(yaw+half)+sideways*math.cos(yaw+half),wrap_angle(yaw+w*dt))
 
 
 def create_control(path, start, settings, controller_factory=None, start_tolerance=.8):
@@ -116,7 +118,7 @@ def create_control(path, start, settings, controller_factory=None, start_toleran
     return control
 
 
-def simulate(poses, config=SimulationConfig(), *, initial_pose=None, initial_progress=0., pause_intervals=(), controller_factory=None):
+def simulate(poses, config=SimulationConfig(), *, initial_pose=None, initial_progress=0., pause_intervals=(), controller_factory=None, model_profile=None):
     values = asdict(config)
     if any(not math.isfinite(v) for k,v in values.items() if v is not None):
         raise ValueError('仿真参数必须是有限数值')
@@ -150,20 +152,45 @@ def simulate(poses, config=SimulationConfig(), *, initial_pose=None, initial_pro
         raise ValueError('初始进度必须位于首个行驶段内')
     tracker.progress=initial_progress
     duration = config.duration if config.duration is not None else max(60.,5*path.total/config.speed+120)
-    actuator = FirstOrderActuator(config.actuator_linear_tau, config.actuator_angular_tau)
-    brake_duration = max(1., 5*max(actuator.taus)) if any(actuator.taus) else 0.
+    if model_profile is None:
+        actuator = FirstOrderActuator(config.actuator_linear_tau, config.actuator_angular_tau)
+    else:
+        from ground_model import make_ground_actuator
+        actuator = make_ground_actuator(model_profile)
+    campaign=bool(model_profile and model_profile.get('schema_version')==2)
+    if campaign and not math.isclose(config.dt,.05,rel_tol=0.,abs_tol=1e-10):
+        raise ValueError('当前X3校准时序仅对应20Hz控制器，simulation.dt必须为0.05秒')
+    response_dynamic = any(actuator.taus) or any(getattr(actuator, 'delays', ()))
+    brake_duration = max(1., 5*max(actuator.taus)+max(getattr(actuator, 'delays', (0.,)))) if response_dynamic else 0.
     if duration <= 0 or math.ceil((duration+brake_duration)/config.dt)>500000:
         raise ValueError('仿真时长必须为正，且不能超过500000个积分步')
     noise = GaussianPoseNoise(config.position_noise, config.heading_noise_deg, config.seed)
+    sensor=None
+    if campaign:
+        import random
+        from observation import DelayedPoseSensor
+        sensor=DelayedPoseSensor(config.feedback_period,model_profile['observation_delay_samples_s'],noise,config.seed)
+        sensor.sample(0.,(x,y,yaw),0.,initial=True)
+        tick_rng=random.Random(config.seed+110951)
     rows = []; state = 'TIME_LIMIT'; reason = '达到仿真时限，尚未完成路径'
     t = 0.
+    if campaign:t=model_profile.get('controller_start_phase_s',0.)
     last_feedback = -math.inf
     actual_speed = 0.
     feedback_stamp = None
     terminal_time = None
-    for step in range(math.ceil((duration+brake_duration)/config.dt)+2):
-        feedback_fresh = t-last_feedback >= config.feedback_period-1e-9
-        if feedback_fresh:
+    minimum_tick=min(model_profile['control_interval_samples_s']) if campaign else config.dt
+    if math.ceil((duration+brake_duration)/minimum_tick)>500000:raise ValueError('模型时序超过500000个控制步')
+    for step in range(math.ceil((duration+brake_duration)/minimum_tick)+2):
+        observation_fault=False
+        if sensor is not None:
+            sample=sensor.deliver(t)
+            feedback_fresh=sample['source_time_s']!=last_feedback
+            last_feedback=sample['source_time_s'];feedback_stamp=last_feedback
+            measured_x,measured_y,measured_yaw,measured_speed=sample['value']
+            observation_fault=t-last_feedback>model_profile.get('feedback_timeout_s',.5)
+        else:feedback_fresh = t-last_feedback >= config.feedback_period-1e-9
+        if feedback_fresh and sensor is None:
             measured_x, measured_y, measured_yaw = noise.sample(x, y, yaw)
             last_feedback,feedback_stamp = t,step
             measured_speed = actual_speed
@@ -179,7 +206,7 @@ def simulate(poses, config=SimulationConfig(), *, initial_pose=None, initial_pro
         leg = tracker.leg_index
         begin = perf_counter()
         try:
-            if paused or terminal_time is not None:
+            if paused or terminal_time is not None or observation_fault:
                 _,_,observed_lateral,observed_yaw = tracker.error(measured_x,measured_y)
                 command = (0.,0.,distance,observed_lateral,wrap_angle(observed_yaw-measured_yaw),False)
             else:
@@ -189,12 +216,15 @@ def simulate(poses, config=SimulationConfig(), *, initial_pose=None, initial_pro
             state,reason='ALIGNMENT_TIMEOUT',str(exc)
             break
         v,w,_,observed_lateral,observed_heading,done = command
+        if observation_fault:
+            state,reason='LOCALIZATION_TIMEOUT','模拟定位交付超时，故障归零，不自动恢复'
+            phase='FAULT';v=w=0.
         if not all(math.isfinite(value) for value in command[:5]):
             raise ValueError('控制器输出包含非有限数值')
         compute_ms = (perf_counter()-begin)*1000
         if t >= duration:
             v,w = 0.,0.
-        if paused:
+        if paused or observation_fault:
             applied_v, applied_w = actuator.reset(t)
         else:
             applied_v, applied_w = actuator.command(v, w, t)
@@ -208,6 +238,10 @@ def simulate(poses, config=SimulationConfig(), *, initial_pose=None, initial_pro
             'v_command_m_s':v,'w_command_rad_s':w,'progress_m':tracker.progress,'leg':leg,'phase':phase})
         rows[-1].update(v_actuator_m_s=applied_v, w_actuator_rad_s=applied_w,
                        v_actual_body_m_s=applied_v, w_actual_rad_s=applied_w)
+        if sensor is not None:
+            rows[-1].update(feedback_delivery_time_s=sample['delivery_time_s'],feedback_age_s=t-last_feedback,
+                            lateral_actual_body_m_s=actuator.lateral_output)
+        if observation_fault:break
         if done and terminal_time is None:
             state,reason='COMPLETED','控制器报告路径跟踪完成'
             if brake_duration == 0:break
@@ -216,27 +250,45 @@ def simulate(poses, config=SimulationConfig(), *, initial_pose=None, initial_pro
             if brake_duration == 0:break
             terminal_time = t
         if terminal_time is not None and t-terminal_time >= brake_duration-1e-9:break
-        next_t = t+config.dt if terminal_time is not None else min((step+1)*config.dt, duration)
-        if config.actuator_linear_tau == config.actuator_angular_tau == 0:
+        if campaign:
+            interval=tick_rng.choice(model_profile['control_interval_samples_s'])
+            next_t=t+interval if terminal_time is not None else min(t+interval,duration)
+        else:next_t = t+config.dt if terminal_time is not None else min((step+1)*config.dt, duration)
+        if not response_dynamic and not campaign:
             x,y,yaw = integrate(x,y,yaw,applied_v,applied_w,next_t-t)
         else:
             # Resolve the changing actuator response with <=5ms midpoint steps;
             # physics is driven by the filtered output, not the controller request.
-            count = max(1, math.ceil((next_t-t)/.005))
-            step_dt = (next_t-t)/count
-            for i in range(count):
-                middle = t+(i+.5)*step_dt
-                mv,mw = actuator.advance(middle)
-                x,y,yaw = integrate(x,y,yaw,mv,mw,step_dt)
+            cursor=t
+            while cursor<next_t-1e-10:
+                boundary=min(next_t,sensor.next_sample) if sensor is not None else next_t
+                count=max(1,math.ceil((boundary-cursor)/.005));step_dt=(boundary-cursor)/count
+                for i in range(count):
+                    middle=cursor+(i+.5)*step_dt
+                    mv,mw=actuator.advance(middle)
+                    x,y,yaw=integrate(x,y,yaw,mv,mw,step_dt,getattr(actuator,'lateral_output',0.))
+                actuator.advance(boundary);cursor=boundary
+                if sensor is not None and abs(boundary-sensor.next_sample)<1e-8:
+                    sensor.sample(boundary,(x,y,yaw),actuator.output[0])
             actuator.advance(next_t)
         actual_speed = actuator.output[0]
         t = next_t
     tracking = [row for row in rows if row['phase']=='TRACKING']
+    # Classify by REFERENCE geometry, so steering oscillation on a straight
+    # cannot reclassify itself as a turn. Same 0.5m window for every algorithm.
+    for row in rows:
+        s = row['progress_m']
+        a, b = max(0., s-.25), min(path.total, s+.25)
+        curvature = wrap_angle(path.at(b)[2]-path.at(a)[2])/max(b-a, 1e-9)
+        row['reference_curvature_rad_m'] = curvature
+        row['reference_region'] = 'turn' if abs(curvature) >= .1 else 'straight'
     metrics = {'kind':'SIMULATION','controller':getattr(tracker,'name',type(tracker).__name__),
         'controller_implementation':type(tracker).__module__+'.'+type(tracker).__name__,
         'wrapper':'CoverageController' if segmented else None,'state':state,'reason':reason,
-        'model':('planar unicycle with first-order body-velocity actuator; <=5ms midpoint integration'
-                 if any(actuator.taus) else 'ideal planar unicycle; exact zero-order-hold integration'),
+        'model':('planar unicycle with fitted gain/clip/delay/first-order equivalent body response'
+                 if model_profile is not None else
+                 'planar unicycle with first-order body-velocity actuator; <=5ms midpoint integration'
+                 if response_dynamic else 'ideal planar unicycle; exact zero-order-hold integration'),
         'parameters':values,'duration_limit_s':duration,'elapsed_simulation_s':t,
         'reference_length_m':path.total,'final_progress_m':tracker.progress,
         'final_endpoint_distance_m':math.dist((x,y),path.points[-1]),
@@ -255,6 +307,11 @@ def simulate(poses, config=SimulationConfig(), *, initial_pose=None, initial_pro
         'heading_error_observed_deg':statistics([math.degrees(r['heading_error_observed_rad']) for r in tracking]),
         'actuator_linear_request_error_m_s':statistics([r['v_actuator_m_s']-r['v_command_m_s'] for r in tracking]),
         'actuator_angular_request_error_rad_s':statistics([r['w_actuator_rad_s']-r['w_command_rad_s'] for r in tracking]),
+        'reference_regions':{name:dict(samples=sum(r['reference_region']==name for r in tracking),
+            cross_track_m=statistics([r['cross_track_true_m'] for r in tracking if r['reference_region']==name]),
+            heading_deg=statistics([math.degrees(r['heading_error_true_rad']) for r in tracking if r['reference_region']==name]))
+            for name in ('straight', 'turn')},
+        'region_definition':'reference heading change over centered 0.5m window; abs(curvature)>=0.1rad/m is turn',
         'notes':['纯算法仿真，不启动ROS/定位/规划/安全节点或硬件；不接入当前Web任务。',
                  '真值是运动学模型积分结果，带噪观测只输入控制器；未将车辆位置吸附到参考路径。',
                  '四种控制律均来自four_controler/four_controler.py；PP为所给参考脚本的速度相关前视/转角公式适配，不调用实车PP.command。',
@@ -262,6 +319,14 @@ def simulate(poses, config=SimulationConfig(), *, initial_pose=None, initial_pro
                  '统计只含TRACKING阶段；原地对齐样本另外保存在CSV，不混入正式跟踪误差。',
                  '噪声只进入周期观测；执行器为独立v/ω一阶滞后，tau=0关闭，暂停直接清零。',
                  '平面模型未包含刚体惯性、侧滑或土壤；附加一阶响应未实车标定，不将该误差当作实车精度。']}
+    if model_profile is not None:
+        metrics['model_profile'] = model_profile
+        metrics['notes'] = [note for note in metrics['notes'] if '未实车标定' not in note]
+        metrics['notes'] += ['当前使用历史地面实验的等效响应辨识；它不等于精确轮胎/土壤动力学，仍不能直接预测实车精度。',
+                             '没有额外叠加MGX测量交付延迟；拟合delay包含时间戳和测量响应，不能当作纯MCU延迟。']
+        if campaign:
+            metrics['notes'][-1]='执行响应按MGX源时间辨识；另模拟源样本到控制器的交付延迟，后者来自记录器代理观测，非已测得的纯MCU延迟。'
+            metrics['model']='navigation-equivalent hybrid planar response with causal sampled delivery and measured control timing'
     return rows,metrics
 
 

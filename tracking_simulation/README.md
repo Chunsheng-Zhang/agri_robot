@@ -1,12 +1,31 @@
 # 路径跟踪算法离线仿真
 
+2026-11-27已用当天地面响应及0.30/0.50 m/s覆盖实验更新**X3硬质地面v2模型**。将行进/原地转向、归零响应、定位采样与交付、控制时序分开建模；另用三次未参与拟合的实验验证。推荐用它做下一轮离线算法筛选，模型边界、实车对照及完整命令见[实车校准与离线验证](2026-11-27_实车校准与离线验证.md)。它仍不能保证厘米级实车复现。
+
+在项目根目录运行新模型，默认复用当天09:52留出实验的路径、0.30 m/s任务和第一帧跟踪位姿；之后自由闭环，不回放实测轨迹：
+
+```bash
+bash tracking_simulation/run.bash --config tracking_simulation/configs/x3_hard_ground.yaml --controller all
+```
+
+只跑LQR用`--controller lqr`；同条件理想对照增加`--ideal`；关闭GIF增加`--no-animation`。修改算法权重请编辑新配置的`tuning`；实验任务参数优先于YAML的`simulation`同名项，临时速度通过`--speed`覆盖。默认`config.yaml`、实车配置与四种控制律没有为这次校准而改动。
+
+2026-11-26的v1模型保留作为历史基线，用法和局限见[X3室外硬地仿真与验证](X3室外硬地仿真与验证.md)。运行旧模型：
+
+```bash
+bash tracking_simulation/run.bash --controller all \
+  --model-profile tracking_simulation/profiles/x3_hard_ground_v1.json
+```
+
+`--model-profile`仅适用于平面入口，显式参数与`--ideal`互斥；新配置内置的模型可由`--ideal`本轮关闭。选定模型后覆盖执行响应和反馈周期，不重复叠加一阶响应。噪声仍取YAML；未使用`--experiment`时初始偏差也取YAML。默认不加新配置或模型参数时继续使用原来的配置。输出包含模型快照、直线/转弯分区统计、CSV、PNG和GIF。
+
 支持位置/航向高斯噪声及线/角速度一阶执行响应，统一在`config.yaml`设置，设为0分别关闭。本次提交保留用户当前配置：四项均为0，定位反馈周期为0.1 s；`--ideal`还会关闭采样保持，使每个控制周期更新定位。初始扰动验证工况为0.03 m、0.5°、两个时间常数均0.15 s，模型与结果见[噪声与执行器响应](噪声与执行器响应.md)。
 
 2026-11-25已按用户要求迁入参考脚本PP，四种跟踪器统一在[four_controler.py](four_controler/four_controler.py)；控制律和参数见下文“控制与评价口径”，扰动验证见[噪声与执行器响应](噪声与执行器响应.md)。
 
 在本文件夹内选择参考路径和控制器，运行独立的闭环仿真，查看轨迹、误差、速度指令和动画。四个算法是路径跟踪控制器（PP、Stanley、LQR、MPC），负责跟踪已有路径，不重新规划路径。
 
-原来的1500 kg乘用车、5/10 m/s自行车模型案例已直接改成当前机器人平面速度接口，旧案例图片不再保留。原始ROS功能包和实车控制器未修改；`run.bash`使用平面运动模型和配置的一阶执行响应，不启动ROS、Web、Gazebo或硬件，不向任何Topic发送指令；两项时间常数设为0时恢复理想速度执行。
+原来的1500 kg乘用车、5/10 m/s自行车模型案例已改成当前机器人平面速度接口。`run.bash`使用平面运动模型和可选执行响应，不启动ROS、Web、Gazebo或硬件，不向任何Topic发送指令；未选择地面模型且两项时间常数为0时为理想速度执行。实车现已有单独迁移的四控制器实现，本入口使用本地控制律；普通前进工况的一致性有软件测试，实车保护/故障流程不是完整复刻。
 
 新增 [Gazebo物理仿真入口](gazebo/README.md)：`bash tracking_simulation/gazebo/run.bash --path-file tracking_simulation/paths/u_turn.json --controller pp --gui`（项目根目录执行）。它复用这里的四控制器、路径与控制参数，另外模拟轮地接触和执行限制，输出指令与物理实际速度；与下文的理想积分入口独立。
 
@@ -15,18 +34,17 @@
 不启动Gazebo，在理想条件下比较四种控制器（从项目根目录运行）：
 
 ```bash
-bash tracking_simulation/run.bash --ideal \
-  --path-file tracking_simulation/paths/u_turn.json --controller all
+bash tracking_simulation/run.bash --ideal --controller all
 ```
 
 `--ideal`只覆盖本次运行：位置/航向噪声与两个执行响应时间常数均为0，定位在每个控制周期更新，不修改`config.yaml`。配置中的初始横向/航向偏差和控制器限速仍保留，用于观察收敛。去掉`--path-file`使用配置的默认覆盖路径；`--controller pp`只运行PP。结果目录以`ideal_`开头，实际参数保存在本轮快照中。
 
 ```bash
-cd /home/zhang/agri_robot/tracking_simulation
+cd /home/jetson/agri_robot/tracking_simulation
 bash run.bash
 ```
 
-默认读取 `config.yaml`，用四种控制器跟踪 `paths/coverage_20261105_141817_777878.json`，结果自动写到 `results/<路径名>_<运行时间>/`。
+默认读取 `config.yaml`，当前用四种控制器跟踪 `paths/coverage_20261105_125347_567395.json`，结果自动写到 `results/<路径名>_<运行时间>/`。实际以配置的`path`为准。
 
 `run.bash`使用项目已有的 `agri_backend/.venv/bin/python`，不需要先激活虚拟环境或source ROS环境，不安装或升级依赖。
 
@@ -71,9 +89,18 @@ tracking_simulation/
 ├── four_controler/
 │   └── four_controler.py          # 本地PP、Stanley角速度适配、LQR、约束MPC
 ├── config.yaml                    # 路径、仿真条件、算法参数、动画设置
+├── configs/x3_hard_ground.yaml    # 当天实车校准工况，显式选择使用
 ├── run.bash                       # 推荐启动入口
 ├── run_tracking.py                # 统一读取/选择/运行/结果归档
 ├── simulate.py                    # 位置反馈—控制指令—运动学积分的公共闭环
+├── ground_model.py                # 地面实验读取、等效响应、辨识与回放指标
+├── calibrate_ground.py            # 辨识/独立验证入口，只读历史data
+├── campaign_data.py               # 当天地面记录、串口TX及控制输入时序读取
+├── campaign_model.py              # 行进/原地/归零等效响应与参数辨识
+├── observation.py                 # 因果定位采样与延迟交付
+├── calibrate_campaign.py          # 当天训练/留出验证、自由闭环对照
+├── profiles/                      # 可入库的地面响应参数及辨识来源指纹
+├── tests/                         # 地面数据语义、辨识隔离、因果响应检查
 ├── gazebo/                        # Gazebo ODE物理层、独立启动/参数/文档/测试
 ├── reports.py                     # 四算法对照图、速度图、指标图和GIF
 ├── results/<路径名>_<运行时间>/   # 每次独立结果，不覆盖已有目录
@@ -88,15 +115,16 @@ tracking_simulation/
 | --- | --- |
 | `controller_compare.gif` | 四算法轨迹动画，加速播放，画面标注模拟时间 |
 | `controller_comparison.png` | 四合一图：参考/实际模型轨迹、横向误差、航向误差、路径进度 |
-| `controller_commands.png` | 线速度、角速度指令对比；当前模型直接执行指令 |
+| `controller_commands.png` | 线速度、角速度指令对比；执行响应另见actuator_response.png |
 | `controller_metrics.png` | 横向RMSE、航向RMSE和模拟用时对比 |
 | 各算法的`actuator_response.png` | 控制请求、一阶响应输出与模型实际速度对比 |
 | `summary.json` | 各算法结果、配置、输入路径及源码指纹 |
+| `model_profile.json` | 仅在选择地面模型时生成，保存实际模型快照 |
 | `config.yaml` | 本次实际使用的配置快照，含命令行覆盖值 |
 | `report.md` | 本次中文结果报告 |
 | `pp/`、`stanley/`、`lqr/`、`mpc/` | 每种算法的逐周期CSV、指标JSON、参考路径和四合一图 |
 
-各算法子目录的`tracking.csv`记录模型位置/航向、控制器观测、横向/航向误差、速度指令、路径进度、阶段及控制计算耗时。真值是模型积分状态，不是实车测量值。CSV距离单位m、角度rad；图中误差使用cm和°。所有输出均留在本文件夹，原路径文件读前后SHA256校验，不改动实验数据。
+各算法子目录的`tracking.csv`记录模型位置/航向、控制器观测、横向/航向误差、速度指令、路径进度、阶段及控制计算耗时，并按参考几何记录直线/转弯区域；两区的RMSE、绝对P95和最大误差分别汇总。真值是模型积分状态，不是实车测量值。CSV距离单位m、角度rad；图中误差使用cm和°。所有输出均留在本文件夹，原路径文件读前后SHA256校验，不改动实验数据。
 
 ## 修改参数
 
@@ -167,15 +195,15 @@ tracking_simulation/
 
 `COMPLETED`需要控制器满足终点位置和路径剩余进度条件，不能因回环起终点接近就提前结束。`TIME_LIMIT`/`ALIGNMENT_TIMEOUT`明确保存未完成状态。MPC未达到最优性容差的次数单列在`optimizer.unconverged`，非零时命令退出码为2，不假称求解通过。输入或文件错误退出1，全部完成且求解满足容差退出0。
 
-这个模型尚未包含实测电机响应、速度饱和、通信/定位延迟、侧滑或土壤作用，不能将结果称为实车精度，也不是Gazebo仿真。不同控制器的整定程度、前馈和速度策略也不同，默认结果不能用来证明某算法在实车或全部路径上更优。
+未选择地面profile时，默认平面模型没有实车辨识的增益、限幅或延迟；v1/v2通过独立profile加入等效响应，v2另包含定位交付及横向关联。这些都没有独立分离真实轮胎滑移、导航误差或土壤作用，不能将结果称为实车精度，也不是Gazebo仿真。不同控制器的整定程度、前馈和速度策略也不同，默认结果不能用来证明某算法在实车或全部路径上更优。
 
 方法参考：[Pure Pursuit原报告](https://publications.ri.cmu.edu/storage/publications/pub_files/pub3/coulter_r_craig_1992_1/coulter_r_craig_1992_1.pdf)、[Stanley原论文](https://robots.stanford.edu/papers/thrun.stanley05.pdf)、[线性约束MPC示例](https://www.cvxgrp.org/scs/examples/python/mpc.html)。本实现按机器人速度接口做了上述明确的工程适配。
 
-## 本轮验证
+## 历史与本轮验证
 
 2026-11-25，本地720点覆盖路径、0.5 m/s、0.8 m前视、初始横向偏差0.1 m和航向5°，四种算法均完成。MPC调用2922次，未收敛0次；90帧GIF及三张汇总图已核对。软件测试14项、合并原控制器回归77项通过，日志在`.cache/four_controller_tests.log`。既有Matplotlib 3D导入提示不影响本工具二维图表，未为此升级系统或依赖。
 
-结果示例：[本轮报告](results/coverage_20261105_141817_777878_20261125_102200_523511/report.md)、[对照图](results/coverage_20261105_141817_777878_20261125_102200_523511/controller_comparison.png)、[动画](results/coverage_20261105_141817_777878_20261125_102200_523511/controller_compare.gif)。
+该早期结果目录`results/coverage_20261105_141817_777878_20261125_102200_523511/`当前已不在本机，不恢复为新结果。本轮2026-11-27的v2校准示例：[报告](results/x3_v2_four_controllers_20261127/report.md)、[对照图](results/x3_v2_four_controllers_20261127/controller_comparison.png)、[动画](results/x3_v2_four_controllers_20261127/controller_compare.gif)。当日实车留出验证见[校准报告](results/x3_campaign_validation_final_20261127/report.md)。
 
 2026-11-26提交前，共用扰动/Gazebo接口检查与既有导航、对齐、点转/倒车回归合计83项通过。上述14/77项是早期版本记录，当前测试源码位于`gazebo/tests/`。结果与缓存不随Git提交，历史本机报告可能已清理。
 

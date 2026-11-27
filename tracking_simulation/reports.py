@@ -19,13 +19,13 @@ def save_actuator_response(output, rows):
                 (axes[0], ('v_command_m_s', 'v_actuator_m_s', 'v_actual_body_m_s'), 'v (m/s)'),
                 (axes[1], ('w_command_rad_s', 'w_actuator_rad_s', 'w_actual_rad_s'), 'w (rad/s)')):
             for field, style, label in zip(fields, ('--', ':', '-'),
-                    ('Controller request', 'Actuator lag output', 'Model actual velocity')):
+                    ('Controller request', 'Actuator response output', 'Model actual velocity')):
                 ax.plot(t, [row[field] for row in rows], style, label=label, linewidth=1)
             ax.set_ylabel(unit)
             ax.grid(alpha=.25)
             ax.legend(fontsize=8)
         axes[1].set_xlabel('Simulation time (s)')
-        fig.suptitle('Controller request / added first-order response / model velocity')
+        fig.suptitle('Controller request / response model output / model velocity')
         fig.savefig(output/'actuator_response.png', dpi=160)
     finally:
         plt.close(fig)
@@ -36,6 +36,7 @@ def save_comparison(output, poses, results, animation):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     physical = all(m.get('kind') == 'GAZEBO_ODE_TRACKING' for _, m in results.values())
+    fitted = any(m.get('model_profile') for _, m in results.values())
     colors=dict(zip(results,('tab:blue','tab:orange','tab:green','tab:red')))
     fig,axes=plt.subplots(2,2,figsize=(13,9),constrained_layout=True)
     try:
@@ -53,7 +54,8 @@ def save_comparison(output, poses, results, animation):
         axes[1,0].set(title='Body-heading error',xlabel='Route progress (m)',ylabel='Error (deg)')
         axes[1,1].set(title='Route progress',xlabel='Simulation time (s)',ylabel='Progress (m)')
         for ax in axes.flat:ax.grid(alpha=.25);ax.legend(fontsize=8)
-        fig.suptitle('SIMULATION | '+('Gazebo ODE physics' if physical else 'shared planar robot model')+' | no real-vehicle calibration')
+        model='Gazebo ODE physics' if physical else 'X3 navigation-equivalent fit' if fitted else 'shared planar robot model'
+        fig.suptitle('SIMULATION | '+model+' | model truth is not an independent vehicle measurement')
         fig.savefig(output/'controller_comparison.png',dpi=150)
     finally:plt.close(fig)
     fig,axes=plt.subplots(2,1,figsize=(12,7),sharex=True,constrained_layout=True)

@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "kind": "X3_GROUND_EQUIVALENT_RESPONSE",
+  "name": "X3 outdoor hard ground, provisional equivalent model",
+  "linear": {
+    "gain": 0.9289357916389525,
+    "limit": 0.6362263411431003,
+    "tau_s": 0.42848410288336486,
+    "delay_s": 0.07500000000000001
+  },
+  "angular": {
+    "gain": 0.7635532379955321,
+    "limit": 1.119098377654963,
+    "tau_s": 1.0059645272586852,
+    "delay_s": 0.0
+  },
+  "feedback_period_s": 0.09998147449999806,
+  "training_runs": [
+    "20261105_125347_323692_web_d320a929",
+    "20261105_141817_620046_web_4aa4bbfc"
+  ],
+  "validation_runs": [
+    "20261105_130800_067216_web_aff105d9",
+    "20261105_141044_857775_web_8228aa11"
+  ],
+  "identification": {
+    "integration_dt_s": 0.01,
+    "delay_grid_s": 0.025,
+    "loss": "equal weight per run, squared body-velocity prediction error",
+    "command_topic": "/base/driver_cmd_vel",
+    "linear_unit": "m/s",
+    "angular_unit": "rad/s"
+  },
+  "limits": [
+    "仅为当前X3室外硬质地面的历史记录等效模型，不是精确轮胎/麦轮动力学。",
+    "等效延迟包含时间戳对齐和MGX测量响应，不能解释为MCU单程延迟。",
+    "限幅是本模型拟合参数，不是已确认的底盘机械速度上限。",
+    "没有独立定位真值，不能从记录分离GNSS误差、侧滑、横移和机械扰动。",
+    "未标定后退、横移、不同地面/载荷/电池电压；训练未覆盖的速度和转向不保证。",
+    "验证实验没有独立1m/s数据，高速外推尚未验证；不将仿真排名当成实车结论。",
+    "历史实验使用旧PP，模型用指令开环回放验证，不声称复现新版四算法实车闭环。"
+  ],
+  "training_source_sha256": {
+    "20261105_125347_323692_web_d320a929": {
+      "data/experiments/20261105_125347_323692_web_d320a929/run.json": "de96aca00b6d1793fa191e4af45cb7371374d52aeeb86e244f4e0bbb20b99b00",
+      "data/experiments/20261105_125347_323692_web_d320a929/config/system.json": "02c363b88d157f5c13fc2e10734dbc13fb41d839bb61b756e994a05f489c1a91",
+      "data/experiments/20261105_125347_323692_web_d320a929/telemetry/motion.csv": "2eb03c4f59cfc95ffebf25d8a935cfacb9344da92948648fd9959f4c072a6ba7",
+      "data/experiments/20261105_125347_323692_web_d320a929/telemetry/mgx23.csv": "e8d5866c0d4ac276d4593914b301b3ae9f3d81223ad124ed8dcf8737347d5033",
+      "data/experiments/20261105_125347_323692_web_d320a929/telemetry/odometry.csv": "d2b6bb8fb02b6aa8a51df7cf725110812cd3ce2ef196139abbc3b0fd1baa8b87"
+    },
+    "20261105_141817_620046_web_4aa4bbfc": {
+      "data/experiments/20261105_141817_620046_web_4aa4bbfc/run.json": "6fafc1a3036e7cccc2f0f757ac5c591b86c3cb561f2812c91563fed90468b11f",
+      "data/experiments/20261105_141817_620046_web_4aa4bbfc/config/system.json": "e86bc32a7c128bf2f872cdc1f27b9a5b27041c620d73bc188cfdd713601d61e8",
+      "data/experiments/20261105_141817_620046_web_4aa4bbfc/telemetry/motion.csv": "ea1b59dc49692f0e6837ba80d3ab5ef77e163b1e578f3deb1115a4633c818579",
+      "data/experiments/20261105_141817_620046_web_4aa4bbfc/telemetry/mgx23.csv": "ead96f6792a5208b6af640bdc02de0e63580c231cbadffbe26e38da21289208a",
+      "data/experiments/20261105_141817_620046_web_4aa4bbfc/telemetry/odometry.csv": "85be9c3ec4adebb9413d935e91bc5d704f2bc21d861e0bea153f06c24be8e3d4"
+    }
+  },
+  "training_excitation": {
+    "linear": {
+      "max_abs_command": 1.0,
+      "fitted_clip_fraction_of_commands": 0.36118455843469066,
+      "limit_excited": true,
+      "limit_note": "拟合限幅有被触发"
+    },
+    "angular": {
+      "max_abs_command": 1.0,
+      "fitted_clip_fraction_of_commands": 0.0,
+      "limit_excited": false,
+      "limit_note": "训练指令没有触发此限幅，限幅值不可充分辨识"
+    }
+  },
+  "validation_status": "lower_velocity_rmse_than_ideal_on_both_holdouts"
+}

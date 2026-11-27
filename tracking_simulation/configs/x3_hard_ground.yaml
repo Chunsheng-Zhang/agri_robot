@@ -1,0 +1,51 @@
+# 当前X3/硬质地面校准工况；实验只提供任务、参考路径、第一帧位姿。
+# 算法权重在本文件tuning中调整；原config.yaml与实车参数保持原样。
+path: ../paths/x3_20261127_coverage.json
+controllers:
+- pp
+- stanley
+- lqr
+- mpc
+simulation:
+  lookahead: 0.8
+  speed: 0.3
+  max_angular: 1.0
+  completion_tolerance: 0.2
+  search_window: 1.0
+  dt: 0.05
+  duration: null
+  initial_lateral: 0.0
+  initial_heading_deg: 0.0
+  feedback_period: 0.1
+  position_noise: 0
+  heading_noise_deg: 0
+  actuator_linear_tau: 0
+  actuator_angular_tau: 0
+  seed: 0
+tuning:
+  pp:
+    lookahead_gain: 0.35
+    wheelbase: 0.16
+    rear_offset: 0.0
+    max_steer_deg: 35.0
+  stanley:
+    cross_track_gain: 1.0
+    heading_gain: 2.0
+    softening_speed: 0.1
+  lqr:
+    lateral_weight: 8.0
+    heading_weight: 3.0
+    angular_weight: 0.5
+  mpc:
+    lateral_weight: 8.0
+    heading_weight: 3.0
+    angular_weight: 0.2
+    terminal_multiplier: 2.0
+    horizon: 20
+    max_iterations: 200
+animation:
+  enabled: true
+  max_frames: 90
+  fps: 10
+model_profile: ../profiles/x3_hard_ground_v2.json
+experiment: ../../data/experiments/20261127_095200_244499_web_64ef7e41
