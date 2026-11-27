@@ -23,6 +23,9 @@ const controllerFresh=computed(()=>fresh.value && context.value?.status.fresh===
 const recording=computed(()=>context.value?.recording.state==='RECORDING')
 const processingNow=computed(()=>context.value?.recording.state==='PROCESSING')
 const active=computed(()=>['ACQUIRING','RUNNING','PAUSED'].includes(context.value?.status.state||''))
+const actualControllerLabel=computed(()=>controllerFresh.value && ['RUNNING','PAUSED'].includes(context.value?.status.state||'')
+  ? context.value?.status.controller_label : undefined)
+const pendingControllerLabel=computed(()=>trackingControllerChoices[tracking.controller_algorithm])
 const canEdit=computed(()=>controllerFresh.value && !recording.value && !processingNow.value && !active.value && !busy.value)
 const canImport=computed(()=>fresh.value && !recording.value && !processingNow.value && !active.value && !busy.value)
 const baseMode=computed(()=>safetyFresh.value && devices.value?.safety.mode==='base')
@@ -129,7 +132,9 @@ onUnmounted(()=>{disposed=true;selection++;clearInterval(poll);clearInterval(clo
         <el-card shadow="never">
           <template #header><strong>2. 路径加载与自主跟随</strong><el-tag>{{ controllerFresh?taskText(context?.status.state):'状态未更新' }}</el-tag></template>
           <p>预览：{{ selected?.name||'未选择' }}<span v-if="selectedLoaded"> · 参考路径已确认</span></p>
-          <p v-if="controllerFresh && context?.status.controller_label" class="note">实际跟踪算法：{{ context.status.controller_label }}</p>
+          <p v-if="actualControllerLabel" class="note">实际跟踪算法：{{ actualControllerLabel }}</p>
+          <p v-else-if="active" class="note">等待本次任务的实际跟踪算法确认</p>
+          <p v-else class="note">待执行跟踪算法：{{ pendingControllerLabel }}（点击“开始路径跟随”时生效）</p>
           <p v-if="selected?.import_source" class="note">来源：{{ selected.import_source.filename }} · {{ selected.import_source.coordinate_system }}。{{ selected.import_source.note }}。开始前请核对道路可通行性。</p>
           <el-form label-position="top" class="parameters">
             <el-form-item label="路径跟踪算法"><el-select v-model="tracking.controller_algorithm" :disabled="active||busy"><el-option v-for="(label,key) in trackingControllerChoices" :key="key" :label="label" :value="key"/></el-select></el-form-item>

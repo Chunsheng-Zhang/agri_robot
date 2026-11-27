@@ -28,7 +28,7 @@ function fixture(){
     '../composables/useRealtime':{useRealtime:()=>({devices,safetyFresh}),numberText:String,taskText:String},'../api/http':{apiUrl:x=>x},
   }
   const {descriptor}=parse(fs.readFileSync(path.join(root,'agri_web/src/views/FollowingView.vue'),'utf8'))
-  const names=['context','selected','busy','received','now','fresh','controllerFresh','canEdit','canImport','importFile','name','processing','tracking','active','mapRaw','mapTrack','filteredPaths','query','selectedLoaded','refresh','choose','start','recordStart','operate','rename','remove']
+  const names=['context','selected','busy','received','now','fresh','controllerFresh','canEdit','canImport','importFile','name','processing','tracking','active','actualControllerLabel','pendingControllerLabel','mapRaw','mapTrack','filteredPaths','query','selectedLoaded','refresh','choose','start','recordStart','operate','rename','remove']
   const code=ts.transpileModule(`${descriptor.scriptSetup.content}\nreturn {${names.join(',')}}`,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const scope=vue.effectScope();let state
   scope.run(()=>state=new Function('require','exports',code)(n=>n.endsWith('.vue')?{}:modules[n],{}))
@@ -38,6 +38,24 @@ function fixture(){
 }
 test('opening the following page does not switch mode, acquire control, load or start',()=>{
   const f=fixture();assert.equal(f.calls.length,0);assert.equal(f.mounted.length,1);assert.equal(f.state.canEdit.value,true);f.stop()
+})
+test('choosing LQR while idle shows it as pending and never presents default PP as actual',()=>{
+  const f=fixture()
+  f.state.context.value.status.controller_label='PP'
+  f.state.tracking.controller_algorithm='lqr'
+  assert.equal(f.state.pendingControllerLabel.value,'LQR')
+  for(const state of ['IDLE','COMPLETED','FAULT','ACQUIRING']){
+    f.state.context.value.status.state=state
+    assert.equal(f.state.actualControllerLabel.value,undefined)
+  }
+  f.state.context.value.status.controller_label='LQR'
+  for(const state of ['RUNNING','PAUSED']){
+    f.state.context.value.status.state=state
+    assert.equal(f.state.actualControllerLabel.value,'LQR')
+  }
+  f.state.context.value.status.age_seconds=2
+  assert.equal(f.state.actualControllerLabel.value,undefined)
+  assert.equal(f.calls.length,0);f.stop()
 })
 test('the selected algorithm is sent on explicit start; active and paused tasks cannot restart',async()=>{
   const f=fixture()

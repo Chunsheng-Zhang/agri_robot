@@ -14,6 +14,9 @@ const source = computed(() => props.kind === 'waypoint' ? 'waypoint' : 'tracking
 const activeRun = computed(() => context.value?.active_run?.mode === props.kind ? context.value.active_run : undefined)
 const status = computed(() => devices.value?.[source.value])
 const state = computed(() => isFresh(status.value) ? status.value?.state : undefined)
+// An idle node reports its default/previous controller, not the edited mission.
+const actualControllerLabel = computed(() => ['RUNNING', 'PAUSED'].includes(state.value || '')
+  ? status.value?.controller_label : undefined)
 const planning = computed(() => props.kind === 'coverage' && isFresh(devices.value?.planning) && devices.value?.planning.state === 'PLANNING')
 const planningProgress = computed(() => planning.value ? devices.value?.planning.search_progress : null)
 const planningPhases: Record<string,string> = { INITIALIZING: '准备地块与评价网格', COARSE: '作业角度粗搜索',
@@ -47,7 +50,9 @@ async function operate(action: 'pause' | 'resume' | 'cancel' | 'cancel_plan') {
 </script>
 <template>
   <div class="task-controls">
-    <small v-if="kind==='coverage' && isFresh(status) && status?.controller_label">实际跟踪算法：{{ status.controller_label }}</small>
+    <small v-if="kind==='coverage' && actualControllerLabel">实际跟踪算法：{{ actualControllerLabel }}</small>
+    <small v-else-if="kind==='coverage' && state==='ACQUIRING'">正在加载本次任务的跟踪算法，等待运行确认</small>
+    <small v-else-if="kind==='coverage' && state">当前未执行路径跟踪；开始任务后显示实际算法</small>
     <div><strong>{{ activeRun?.name || (kind === 'waypoint' ? '多点导航任务' : '覆盖作业任务') }}<span v-if="activeRun"> · v{{ activeRun.mission_revision }}</span></strong><el-tag type="info">{{ taskText(displayState) }}</el-tag><small>{{ activeRun?.reason || status?.reason || '任务开始后在此查看反馈' }}</small><small v-if="state && state !== 'IDLE'">用时 {{ numberText(status?.elapsed_seconds, 1) }} s（含暂停）<span v-if="progress !== null"> · {{ source === 'tracking' ? '路径任务进度' : '目标点完成进度' }} {{ numberText(progress, 1) }}%</span></small></div>
     <div v-if="planningProgress" class="planning-progress" role="status" aria-live="polite">
       <strong>智能规划进度：{{ planningPhases[planningProgress.phase] || planningProgress.phase }}</strong>

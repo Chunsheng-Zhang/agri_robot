@@ -47,9 +47,26 @@ function fixture(kind) {
   return { props, devices, context, safetyFresh, calls, refreshes, messages, modules, load, stop: () => scope.stop() }
 }
 const controls = f => f.load('components/tasks/TaskControls.vue', [
-  'source', 'activeRun', 'state', 'displayState', 'planning', 'coveragePhase', 'progress', 'planningProgress',
+  'source', 'activeRun', 'state', 'displayState', 'planning', 'coveragePhase', 'progress', 'planningProgress', 'actualControllerLabel',
   'canPause', 'canResume', 'canCancel', 'operate',
 ])
+test('idle or completed default/previous PP is not shown as the actual algorithm; fresh running LQR is',()=>{
+  const f=fixture('coverage'),c=controls(f)
+  f.devices.value.tracking.controller_label='PP'
+  for(const state of ['IDLE','READY','COMPLETED','CANCELED','FAULT','ACQUIRING']){
+    f.devices.value.tracking.state=state
+    assert.equal(c.actualControllerLabel.value,undefined)
+  }
+  f.devices.value.tracking.controller_label='LQR'
+  for(const state of ['RUNNING','PAUSED']){
+    f.devices.value.tracking.state=state
+    assert.equal(c.actualControllerLabel.value,'LQR')
+  }
+  f.devices.value.tracking.stale=true
+  assert.equal(c.actualControllerLabel.value,undefined)
+  assert.equal(f.calls.length,0)
+  f.stop()
+})
 
 test('waypoint section cannot act on a running coverage task when global mode is coverage', async () => {
   const f = fixture('waypoint')

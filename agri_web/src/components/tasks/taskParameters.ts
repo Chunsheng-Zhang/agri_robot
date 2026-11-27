@@ -22,7 +22,7 @@ export const parameterFields: Record<MissionMode, ParameterField[]> = {
   ],
   coverage: [
     { key: 'controller_algorithm', label: '路径跟踪算法', choices: trackingControllerChoices,
-      hint: '开始前选择并保存；运行或暂停期间不可切换。PP为仿真迁移版，Stanley/LQR/MPC共用停车转向和航向对齐流程。修改后需保存并重新规划或加载匹配路径' },
+      hint: '下拉选择只修改任务配置，开始任务时才加载并确认实际算法。修改后需保存并重新规划或加载匹配路径；运行或暂停期间不可切换。PP为仿真迁移版，四种算法共用停车转向和航向对齐流程' },
     { key: 'robot_width', label: '车体宽度 robot_width', unit: 'm', min: 0.05, max: 20, step: 0.01, hint: '默认0.2m；手工曲线按半车宽检查，智能原地转向按车体长宽的完整旋转包络检查。修改后保存并重新规划' },
     { key: 'robot_length', label: '车体包络长度', unit: 'm', min: 0.05, max: 20, step: 0.01, hint: '默认0.45m为估计值；填写以旋转中心为基准的车辆及随车机具包络尺寸' },
     { key: 'rotation_safety_margin', label: '原地转向安全余量', unit: 'm', min: 0, max: 5, step: 0.01, hint: '默认0.05m；智能规划按车体对角线半径加此余量设置最小安全地头' },
