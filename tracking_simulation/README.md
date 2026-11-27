@@ -233,6 +233,27 @@ agri_backend/.venv/bin/python -B tracking_simulation/validate_pp_lookahead.py
 
 结果见[验证统计](results/pp_lookahead_validation_20261127/validation.json)、[误差对照图](results/pp_lookahead_validation_20261127/paired_error_comparison.png)、[系数灵敏度图](results/pp_lookahead_validation_20261127/gain_sensitivity.png)。每个PP响应模型的种子0对照保存完整CSV、指标、PNG及前视/曲率记录；原始输入读前后SHA256一致。未改实车控制器、Web或默认参数，未启动ROS/设备、行驶、升级或commit/push。
 
+## PP 的 L0/T/K 遗传算法离线调参
+
+2026-11-27按用户要求增加 `tune_pp.py`，只搜索现有PP公式的 `L0`（任务基础前视）、`T`（`lookahead_gain`）及 `K`（`curvature_gain`）。前视上下限0.65/1.05m、曲率窗口1m、车辆几何、任务速度与控制逻辑固定；不自动回写默认YAML、生产控制器或加载实车。
+
+使用两个固定车辆响应模型、0.30/0.50m/s场景进行实数编码GA搜索：两个随机种子、锦标赛选择、混合交叉、高斯变异、精英保留与随机新个体。目标、范围和退化限制在运行前写入 `protocol.json`，选择先保存到 `selection.json`，再用另一初始位姿、噪声及响应变化复核。复核结果不反过来改本轮选择；不通过项如实保留。没有证明全局最优或实车最优。参考Xiao双闭环论文的离线优化流程，但该论文采用ACA，此入口按用户要求采用GA。
+
+两个冻结模型随源码保存在 `profiles/x3_hard_ground_v2.json` 和 `profiles/x3_pp_response_probe_20261127.json`，GA不再依赖历史结果目录里的模型文件。PP试验模型仅用09:01实车记录重新辨识行进角响应，其增益0.9074626679、时间常数0.7728223493s与先前试验一致；没有重新选择参数或回写历史结果。完整搜索仍需本机保留09:01、09:25两次实验原始记录；本机历史results目录可能已清理，重新运行会创建新的独立目录。
+
+从项目根目录运行（输出目录必须不存在；使用已有数据及模型，不启动ROS/硬件）：
+
+```bash
+TMPDIR="$PWD/tracking_simulation/.cache/tmp" MPLCONFIGDIR="$PWD/tracking_simulation/.cache/matplotlib" OPENBLAS_NUM_THREADS=1 \
+  agri_backend/.venv/bin/python -B tracking_simulation/tune_pp.py \
+  --output tracking_simulation/results/pp_ga_L0_T_K_repeat
+TMPDIR="$PWD/tracking_simulation/.cache/tmp" MPLCONFIGDIR="$PWD/tracking_simulation/.cache/matplotlib" OPENBLAS_NUM_THREADS=1 \
+  agri_backend/.venv/bin/python -B tracking_simulation/report_pp_ga.py \
+  tracking_simulation/results/pp_ga_L0_T_K_repeat
+```
+
+第二步输出中文报告、六条直线P1复核、额外U型路径验证及GA收敛图。原始搜索与验证保存JSONL/CSV，典型场景保留逐周期CSV和图。`candidate.yaml`可供 `run.bash --config ... --controller pp` 直接运行。完整复核结果见 [本轮GA报告](results/pp_ga_L0_T_K_20261127/report.md)；本机结果继续按既有规则忽略，不强制入Git。先前网格搜索已因用户调整为GA而中止，`results/pp_parameter_search_20261127/interrupted.json`保留原因，不作为最终结果。
+
 ## 历史与本轮验证
 
 2026-11-25，本地720点覆盖路径、0.5 m/s、0.8 m前视、初始横向偏差0.1 m和航向5°，四种算法均完成。MPC调用2922次，未收敛0次；90帧GIF及三张汇总图已核对。软件测试14项、合并原控制器回归77项通过，日志在`.cache/four_controller_tests.log`。既有Matplotlib 3D导入提示不影响本工具二维图表，未为此升级系统或依赖。
