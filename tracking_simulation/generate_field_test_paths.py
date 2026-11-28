@@ -73,7 +73,7 @@ def pear_geometry(length, radius, spacing, row_spacing=2.):
     return rows
 
 
-def generate(output, straight_length=20., leg_length=10., spacing=.05, add_pears=False):
+def generate(output, straight_length=20., leg_length=5., spacing=.05, add_pears=False):
     for value in (straight_length, leg_length, spacing):
         if not math.isfinite(value) or value <= 0:
             raise ValueError('长度和采样间距必须为有限正数')
@@ -228,7 +228,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--straight-length', type=float, default=20.)
-    parser.add_argument('--leg-length', type=float, default=10.)
+    parser.add_argument('--leg-length', type=float, default=5.)
     parser.add_argument('--spacing', type=float, default=.05)
     parser.add_argument('--add-pears', action='store_true', help='核对原四条路径字节不变后，在已有目录追加两条梨型，更新图/说明/清单/ZIP')
     args = parser.parse_args()
