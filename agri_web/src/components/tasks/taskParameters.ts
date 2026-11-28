@@ -1,7 +1,11 @@
 import type { MissionMode } from '../../api/workspace'
 export interface ParameterField { key: string; label: string; unit?: string; min?: number; max?: number; step?: number; degrees?: boolean; choices?: Record<string, string>; toggle?: boolean; hint?: string }
 export const trackingControllerChoices: Record<string, string> = {
-  pp: 'PP（速度/曲率自适应前视）', stanley: 'Stanley', lqr: 'LQR', mpc: 'MPC',
+  pp: 'PP（速度/曲率自适应，GA参数）', pp_speed: 'PP（仅速度自适应，昨日版）', stanley: 'Stanley', lqr: 'LQR', mpc: 'MPC',
+}
+// Only explicit selection applies the suggestion; opening a saved task does not.
+export function trackingControllerLookahead(algorithm: unknown): number | undefined {
+  return algorithm === 'pp_speed' ? 0.8 : algorithm === 'pp' ? 0.5590 : undefined
 }
 const shared: ParameterField[] = [
   { key: 'max_angular', label: '最大角速度', unit: 'rad/s', min: 0.01, max: 2, step: 0.05 },
@@ -22,7 +26,7 @@ export const parameterFields: Record<MissionMode, ParameterField[]> = {
   ],
   coverage: [
     { key: 'controller_algorithm', label: '路径跟踪算法', choices: trackingControllerChoices,
-      hint: '下拉选择只修改任务配置，开始任务时才加载并确认实际算法。修改后需保存并重新规划或加载匹配路径；运行或暂停期间不可切换。PP为仿真迁移版，四种算法共用停车转向和航向对齐流程' },
+      hint: '选择只修改草稿。昨日版PP将基础前视设为0.8m，GA版设为0.5590m，可再修改。保存并重新规划或加载匹配路径后开始生效；运行/暂停期间不可切换，共用停车转向和对齐流程' },
     { key: 'robot_width', label: '车体宽度 robot_width', unit: 'm', min: 0.05, max: 20, step: 0.01, hint: '默认0.2m；手工曲线按半车宽检查，智能原地转向按车体长宽的完整旋转包络检查。修改后保存并重新规划' },
     { key: 'robot_length', label: '车体包络长度', unit: 'm', min: 0.05, max: 20, step: 0.01, hint: '默认0.45m为估计值；填写以旋转中心为基准的车辆及随车机具包络尺寸' },
     { key: 'rotation_safety_margin', label: '原地转向安全余量', unit: 'm', min: 0, max: 5, step: 0.01, hint: '默认0.05m；智能规划按车体对角线半径加此余量设置最小安全地头' },
@@ -35,9 +39,9 @@ export const parameterFields: Record<MissionMode, ParameterField[]> = {
     { key: 'path_continuity', label: '转弯曲率形式', choices: { DUBINS: 'Dubins（前进，圆弧与直线）', DUBINS_CC: 'Dubins CC（前进，连续曲率）', REEDS_SHEPP: 'Reeds–Shepp（可前进、倒车）', REEDS_SHEPP_HC: 'Reeds–Shepp HC（可前进、倒车，混合曲率）' }, hint: '仅手工规划采用此曲线；按设定最小半径生成。Reeds–Shepp 的倒车段需要勾选允许倒车；一键优化固定原地转向' },
     { key: 'allow_reverse', label: '允许倒车', toggle: true, hint: '默认关闭；勾选并保存、重新规划后，允许执行Reeds–Shepp倒车段，换向时先停车对齐。Dubins仍只前进；现有前方180°雷达配置不保护车后方' },
     { key: 'sampling_distance', label: '路径采样间距', unit: 'm', min: 0.02, max: 1, step: 0.02 },
-    { key: 'lookahead', label: 'PP基础前视距离', unit: 'm', min: 0.1, max: 10, step: 0.1, hint: '仅PP采用：实际前视随速度和前方路径曲率自动调整，限定0.65～1.05 m；此处设置基础值，其余算法不使用该参数' },
+    { key: 'lookahead', label: 'PP基础前视距离', unit: 'm', min: 0.1, max: 10, step: 0.1, hint: '昨日版：Ld=L0+0.35×实际速度，不加曲率项或0.65～1.05m截断；GA版按速度/曲率调整并限定0.65～1.05m。其余算法不使用此参数' },
     { key: 'speed', label: '目标行驶速度', unit: 'm/s', min: 0.01, max: 1, step: 0.05, hint: '目标速度大小，最大1 m/s；随转弯、换向点和终点减速。允许倒车时由路径方向决定线速度正负' },
-    { key: 'max_angular', label: '最大角速度', unit: 'rad/s', min: 0.01, max: 1, step: 0.05, hint: '角速度指令在正负此值内限幅，最大允许±1 rad/s；实际输出由跟踪误差和曲率决定' },
+    { key: 'max_angular', label: '最大角速度', unit: 'rad/s', min: 0.01, max: 5, step: 0.05, hint: '角速度指令在正负此值内限幅，最大允许±5 rad/s；实际输出由跟踪误差和曲率决定' },
     { key: 'completion_tolerance', label: '终点完成阈值', unit: 'm', min: 0.02, max: 2, step: 0.05 },
     { key: 'start_tolerance', label: '直接跟踪起点距离', unit: 'm', min: 0.05, max: 5, step: 0.1, hint: '超过此距离会先单点导航到覆盖起点，再自动跟踪；不限制单点接近的总距离' },
     { key: 'search_window', label: '路径进度搜索窗口', unit: 'm', min: 0.1, max: 10, step: 0.1 },

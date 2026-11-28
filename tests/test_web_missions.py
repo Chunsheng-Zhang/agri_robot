@@ -11,11 +11,29 @@ from agri_base.coordinates import LocalFrame
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_following_start_distance_accepts_two_metres_and_keeps_other_limits():
+    from agri_backend.taught_paths import FollowingParameters
+    assert FollowingParameters().start_tolerance == .3
+    for distance in (.05, 1.5, 2.):
+        parameters = FollowingParameters(start_tolerance=distance)
+        assert parameters.start_tolerance == distance
+        assert parameters.max_path_error == .5
+    for distance in (.049, 2.001, float('inf'), float('nan')):
+        with pytest.raises(ValidationError):
+            FollowingParameters(start_tolerance=distance)
+
+
 def test_coverage_accepts_new_velocity_bounds_without_changing_waypoint_bounds():
-    assert CoverageParameters(speed=1, max_angular=1).max_angular == 1
-    for values in ({'speed': 1.001}, {'speed': -1}, {'max_angular': 1.001}):
+    from agri_backend.taught_paths import FollowingParameters
+    assert CoverageParameters(speed=1, max_angular=5).max_angular == 5
+    assert FollowingParameters(max_angular=5).max_angular == 5
+    assert CoverageParameters().max_angular == FollowingParameters().max_angular == 5
+    for values in ({'speed': 1.001}, {'speed': -1}, {'max_angular': 5.001}):
         with pytest.raises(ValidationError):
             CoverageParameters(**values)
+    for value in (0, -5, 5.001, float('nan')):
+        with pytest.raises(ValidationError):
+            FollowingParameters(max_angular=value)
     with pytest.raises(ValidationError):
         WaypointParameters(max_angular=5)
 

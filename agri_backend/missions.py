@@ -97,7 +97,7 @@ class SmartPlanningParameters(StrictModel):
 
 
 class CoverageParameters(SmartPlanningParameters):
-    controller_algorithm: Literal['pp', 'stanley', 'lqr', 'mpc'] = 'pp'
+    controller_algorithm: Literal['pp', 'pp_speed', 'stanley', 'lqr', 'mpc'] = 'pp'
     robot_width: float = Field(default=0.2, ge=0.05, le=20)
     robot_length: float = Field(default=0.45, ge=0.05, le=20)
     rotation_safety_margin: float = Field(default=0.05, ge=0, le=5)
@@ -114,13 +114,20 @@ class CoverageParameters(SmartPlanningParameters):
     angle_mode: Literal['SET_ANGLE', 'BRUTE_FORCE'] = 'SET_ANGLE'
     path_continuity: Literal['DUBINS', 'DUBINS_CC', 'REEDS_SHEPP', 'REEDS_SHEPP_HC'] = 'DUBINS_CC'
     allow_reverse: bool = Field(default=False, strict=True)
-    lookahead: float = Field(default=0.8, ge=0.1, le=10)
+    lookahead: float = Field(default=0.5590, ge=0.1, le=10)
     speed: float = Field(default=0.2, gt=0, le=1)
-    max_angular: float = Field(default=1.0, gt=0, le=1)
+    max_angular: float = Field(default=5.0, gt=0, le=5)
     completion_tolerance: float = Field(default=0.2, ge=0.02, le=2)
     start_tolerance: float = Field(default=0.8, ge=0.05, le=5)
     search_window: float = Field(default=1, ge=0.1, le=10)
     max_path_error: float = Field(default=2, ge=0.05, le=10)
+
+    @model_validator(mode='before')
+    @classmethod
+    def speed_only_base_default(cls, value):
+        if isinstance(value, dict) and value.get('controller_algorithm') == 'pp_speed' and 'lookahead' not in value:
+            return {**value, 'lookahead': .8}
+        return value
 
     @model_validator(mode='before')
     @classmethod

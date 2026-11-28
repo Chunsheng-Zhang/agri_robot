@@ -8,6 +8,8 @@ const compile=(file,names)=>{
   return ts.transpileModule(`${descriptor.scriptSetup.content}\nreturn {${names.join(',')}}`,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
 }
 const projection={latitude:36,longitude:117,epsg:32650}
+const trackingFields={}
+new Function('exports',ts.transpileModule(fs.readFileSync(path.join(root,'agri_web/src/components/tasks/taskParameters.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText)(trackingFields)
 function editor(){
   const props=vue.reactive({kind:'coverage',defaults:{},mission:{id:'mission',revision:1,name:'入口测试',mode:'coverage',parameters:{},waypoints:[],
     boundary:{points:[{longitude:117,latitude:36},{longitude:117.001,latitude:36},{longitude:117,latitude:36.001}]},
@@ -21,12 +23,26 @@ function editor(){
       mapToWgs84:(...args)=>new Promise(resolve=>requests.push({args,resolve})),
       missionAction:async(...args)=>calls.push(args),previewMission:async()=>props.mission.preview,
       saveMission:async payload=>({...payload,id:'mission',revision:2,projection,preview:props.mission.preview}),
-    },'./taskParameters':{parameterFields:{coverage:[]},coverageQualityFields:[]},'./defaultTaskPoints':{defaultTaskPoints:[]},
+    },'./taskParameters':trackingFields,'./defaultTaskPoints':{defaultTaskPoints:[]},
   }
-  const code=compile('components/tasks/TaskEditor.vue',['entrySource','entryLongitude','entryLatitude','entryLocal','entryPicking','entryLoading','selectEntry','clearEntry','payload','dirty','planReady','operate','save'])
+  const code=compile('components/tasks/TaskEditor.vue',['entrySource','entryLongitude','entryLatitude','entryLocal','entryPicking','entryLoading','selectEntry','clearEntry','payload','dirty','planReady','operate','save','parameters','parameterChoiceChanged'])
   const state=scope.run(()=>new Function('require','exports','defineProps','defineEmits',code)(n=>n.endsWith('.vue')?{}:modules[n],{},()=>props,()=>()=>{}))
   return {state,props,context,calls,requests,stop:()=>{cleanup.forEach(f=>f());scope.stop()}}
 }
+test('choosing yesterday PP changes only the draft base distance and invalidates old planning',()=>{
+  const f=editor(),e=f.state
+  e.parameters.value.speed=.5;e.parameters.value.max_angular=5
+  e.parameters.value.controller_algorithm='pp_speed';e.parameterChoiceChanged('controller_algorithm')
+  assert.equal(e.parameters.value.lookahead,.8)
+  assert.equal(e.parameters.value.speed,.5);assert.equal(e.parameters.value.max_angular,5)
+  assert.equal(e.dirty.value,true);assert.equal(e.planReady.value,false)
+  assert.equal(f.calls.length,0)
+  e.parameters.value.lookahead=.9;e.parameterChoiceChanged('route_mode')
+  assert.equal(e.parameters.value.lookahead,.9)
+  e.parameters.value.controller_algorithm='pp';e.parameterChoiceChanged('controller_algorithm')
+  assert.equal(e.parameters.value.lookahead,.5590)
+  assert.equal(f.props.mission.parameters.lookahead,undefined);f.stop()
+})
 test('coordinate entry is saved with the task and invalidates both planning execution and old readiness',async()=>{
   const f=editor(),e=f.state
   assert.equal(e.planReady.value,true)

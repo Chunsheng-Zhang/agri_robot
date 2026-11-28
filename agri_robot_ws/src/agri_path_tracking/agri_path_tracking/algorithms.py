@@ -12,12 +12,15 @@ import numpy as np
 from agri_base.coordinates import wrap_angle
 from .controller import PurePursuit as PathTrackingState
 
-NAMES = ('pp', 'stanley', 'lqr', 'mpc')
-LABELS = {'pp': 'Pure Pursuit', 'stanley': 'Stanley (yaw-rate)', 'lqr': 'LQR', 'mpc': 'MPC'}
-PP_DEFAULTS = dict(lookahead_gain=.35, wheelbase=.16, rear_offset=0., max_steer_deg=35.,
-                   curvature_gain=.25, lookahead_min=.65, lookahead_max=1.05, curvature_window=1.)
+NAMES = ('pp', 'pp_speed', 'stanley', 'lqr', 'mpc')
+LABELS = {'pp': 'PP (speed/curvature, GA)', 'pp_speed': 'PP (speed-only, 2026-11-27)',
+          'stanley': 'Stanley (yaw-rate)', 'lqr': 'LQR', 'mpc': 'MPC'}
+PP_DEFAULTS = dict(lookahead_gain=.8388, wheelbase=.16, rear_offset=0., max_steer_deg=35.,
+                   curvature_gain=.4076, lookahead_min=.65, lookahead_max=1.05, curvature_window=1.)
+PP_SPEED_DEFAULTS = dict(lookahead_gain=.35, wheelbase=.16, rear_offset=0., max_steer_deg=35.)
 DEFAULT_TUNING = {
     'pp': PP_DEFAULTS,
+    'pp_speed': PP_SPEED_DEFAULTS,
     'stanley': dict(cross_track_gain=1., heading_gain=2., softening_speed=.1),
     'lqr': dict(lateral_weight=8., heading_weight=3., angular_weight=.5),
     'mpc': dict(lateral_weight=8., heading_weight=3., angular_weight=.2,
@@ -42,6 +45,8 @@ def make_tracker(path, algorithm='pp', dt=.05, **settings):
         raise ValueError('Controller period must be finite and positive')
     if algorithm == 'pp':
         tracker = PurePursuit(path, tuning=deepcopy(DEFAULT_TUNING['pp']), **settings)
+    elif algorithm == 'pp_speed':
+        tracker = SpeedAdaptivePursuit(path, tuning=deepcopy(DEFAULT_TUNING['pp_speed']), **settings)
     else:
         try:
             tracker = RobotController(path, algorithm, dt, deepcopy(DEFAULT_TUNING), **settings)
@@ -54,7 +59,9 @@ def make_tracker(path, algorithm='pp', dt=.05, **settings):
 def controller_metadata(algorithm):
     validate_algorithm(algorithm)
     return {'algorithm': algorithm, 'label': LABELS[algorithm],
-            'implementation': ('agri_path_tracking.pp_speed_curvature.v2' if algorithm == 'pp'
+            **({'parameter_profile': 'ga_L0_T_K_20261127'} if algorithm == 'pp' else {}),
+            'implementation': ('agri_path_tracking.pp_speed_only.20261127' if algorithm == 'pp_speed'
+                               else 'agri_path_tracking.pp_speed_curvature.v2' if algorithm == 'pp'
                                else 'agri_path_tracking.algorithms.v1'),
             'tuning': deepcopy(DEFAULT_TUNING.get(algorithm, {}))}
 
@@ -156,6 +163,24 @@ class PurePursuit(PathTrackingState):
         speed = min(self.speed, .5*max(endpoint, remaining),
                     self.max_angular/max(abs(curvature), 1e-9))
         return direction*speed, speed*curvature, distance, lateral, heading, False
+
+
+class SpeedAdaptivePursuit(PurePursuit):
+    """November 27 speed-only law, sharing geometry and segment safety states."""
+    name = 'Pure Pursuit (speed-only, 2026-11-27)'
+
+    def __init__(self, path, tuning=None, **settings):
+        legacy = dict(PP_SPEED_DEFAULTS, **(tuning or {}))
+        if set(legacy) != set(PP_SPEED_DEFAULTS):
+            raise ValueError('未知速度自适应PP配置项')
+        settings.setdefault('lookahead', .8)
+        super().__init__(path, tuning=legacy, **settings)
+        self.tuning = legacy
+
+    def lookahead_distance(self, progress, lower, upper):
+        # Historical law has neither a curvature denominator nor the new clip.
+        self.preview_curvature = 0.
+        return self.lookahead+self.tuning['lookahead_gain']*abs(self.measured_speed)
 
 
 def discrete_model(speed, dt):

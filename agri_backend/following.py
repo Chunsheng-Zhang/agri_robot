@@ -313,8 +313,12 @@ def install_routes(app, require_bridge):
     def context():
         workspace().sync()
         snapshot = device_cache.snapshot()
+        # Match workspace.context(): internal reconnection timestamps can be
+        # -inf and are neither public run fields nor JSON values.
+        active = workspace().active or {}
+        public_run = {k:v for k,v in active.items() if not k.startswith('_')}
         return {**manager.snapshot(),'paths':manager.store.list(),'status':snapshot['following'],
-                'active_run':workspace().active if workspace().active and workspace().active.get('mode')=='following' else None}
+                'active_run':public_run if public_run.get('mode')=='following' else None}
 
     @router.get('/path/reference')
     def reference_path():

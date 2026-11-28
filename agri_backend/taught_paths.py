@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 from statistics import median
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .missions import atomic_json, now
 from agri_base.path_geometry import directed_poses, motion_signature, point_turn_indices
@@ -25,14 +25,21 @@ class ProcessingParameters(BaseModel):
 
 class FollowingParameters(BaseModel):
     model_config = ConfigDict(extra='forbid', allow_inf_nan=False)
-    controller_algorithm: Literal['pp', 'stanley', 'lqr', 'mpc'] = 'pp'
-    lookahead: float = Field(default=0.5, ge=0.1, le=3.)
+    controller_algorithm: Literal['pp', 'pp_speed', 'stanley', 'lqr', 'mpc'] = 'pp'
+    lookahead: float = Field(default=0.5590, ge=0.1, le=3.)
     speed: float = Field(default=0.1, ge=0.02, le=1.)
-    max_angular: float = Field(default=0.5, ge=0.05, le=1.)
+    max_angular: float = Field(default=5.0, ge=0.05, le=5.)
     completion_tolerance: float = Field(default=0.15, ge=0.03, le=0.5)
-    start_tolerance: float = Field(default=0.3, ge=0.05, le=0.5)
+    start_tolerance: float = Field(default=0.3, ge=0.05, le=2.)
     search_window: float = Field(default=1., ge=0.1, le=5.)
     max_path_error: float = Field(default=0.5, ge=0.1, le=2.)
+
+    @model_validator(mode='before')
+    @classmethod
+    def speed_only_base_default(cls, value):
+        if isinstance(value, dict) and value.get('controller_algorithm') == 'pp_speed' and 'lookahead' not in value:
+            return {**value, 'lookahead': .8}
+        return value
 
 
 def angle(value):

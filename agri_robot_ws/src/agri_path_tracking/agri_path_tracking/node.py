@@ -23,7 +23,7 @@ class PathTracker(TaskNode):
         self.reference_topic = '/following/reference_path' if following else '/reference_path'
         super().__init__('path_follower' if following else 'path_tracker', 'following' if following else 'tracking')
         defaults = {'controller_algorithm': 'pp',
-                    'lookahead': 0.8, 'speed': 0.2, 'max_angular': 1.0,
+                    'lookahead': 0.5590, 'speed': 0.2, 'max_angular': 5.0,
                     'completion_tolerance': 0.2, 'search_window': 1.0,
                     'start_tolerance': 0.8, 'max_path_error': 2.0,
                     'alignment_tolerance': math.radians(5), 'alignment_hold_time': 0.5,

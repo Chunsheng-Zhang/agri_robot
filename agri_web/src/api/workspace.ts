@@ -33,7 +33,7 @@ export interface SavedPlanPath extends ReferencePathResponse {
   run: Run; projection: Projection; preview: Preview
 }
 export interface Run {
-  controller_algorithm?: 'pp'|'stanley'|'lqr'|'mpc'
+  controller_algorithm?: 'pp'|'pp_speed'|'stanley'|'lqr'|'mpc'
   id: string; mission_id: string; mission_revision: number; name: string; mode: MissionMode | 'following'
   stage: string; state: string; reason: string; created_at: string; updated_at: string
   coverage_quality_version?: number

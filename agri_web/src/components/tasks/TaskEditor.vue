@@ -6,7 +6,7 @@ import { useWorkspace } from '../../composables/useWorkspace'
 import { saveMission, previewMission, missionAction, downloadJson, getSavedPlanPath, loadSavedPlan, savePlannedPath, mapToWgs84 } from '../../api/workspace'
 import type { PathPoint } from '../../api/robot'
 import type { MissionDocument, MissionInput, MissionMode, GeoPoint, Preview, Projection, SavedPlanPath } from '../../api/workspace'
-import { coverageQualityFields, parameterFields } from './taskParameters'
+import { coverageQualityFields, parameterFields, trackingControllerLookahead } from './taskParameters'
 import { defaultTaskPoints } from './defaultTaskPoints'
 import type { ParameterField } from './taskParameters'
 import FieldMap from '../dashboard/FieldMap.vue'
@@ -36,6 +36,11 @@ let savedPathGeneration = 0
 let timer: ReturnType<typeof setTimeout> | undefined
 let disposed = false
 const copy = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
+function parameterChoiceChanged(key: string) {
+  if (key !== 'controller_algorithm') return
+  const value = trackingControllerLookahead(parameters.value.controller_algorithm)
+  if (value !== undefined) parameters.value.lookahead = value
+}
 function copyParameters(value: Readonly<Record<string, number | string | boolean>>) {
   const result = copy(value) as Record<string, number | string | boolean>
   if (props.kind === 'coverage' && typeof result.allow_reverse !== 'boolean') result.allow_reverse = false
@@ -317,7 +322,7 @@ onUnmounted(() => { disposed = true; ++savedPathGeneration; ++entryGeneration; c
         <div class="parameter-grid">
           <el-form-item v-for="field in parameterFields[kind]" :key="field.key" :label="`${field.label}${field.unit ? '（' + field.unit + '）' : ''}`">
             <el-checkbox v-if="field.toggle" v-model="parameters[field.key]">允许倒车作业</el-checkbox>
-            <el-select v-else-if="field.choices" v-model="parameters[field.key]"><el-option v-for="(label, value) in field.choices" :key="value" :label="label" :value="value" /></el-select>
+            <el-select v-else-if="field.choices" v-model="parameters[field.key]" @change="parameterChoiceChanged(field.key)"><el-option v-for="(label, value) in field.choices" :key="value" :label="label" :value="value" /></el-select>
             <el-input-number v-else :model-value="numberValue(field)" :min="field.min" :max="field.max" :step="field.step || 0.1" :precision="3" controls-position="right" @update:model-value="setNumber(field, $event)" />
             <small v-if="field.hint">{{ field.hint }}</small>
           </el-form-item>

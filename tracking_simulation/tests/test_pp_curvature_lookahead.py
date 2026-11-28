@@ -59,14 +59,14 @@ def test_tangent_wrap_does_not_create_a_spurious_two_pi_curvature():
 def test_zero_curvature_gain_restores_entire_original_free_closed_loop():
     poses=forward_poses([(0.,0.),(3.,0.),(4.,1.),(4.,4.)])
     config=SimulationConfig(speed=.5,duration=15.,feedback_period=.1)
-    original,_=simulate(poses,config,controller_factory=lambda p,**kw:SpeedPursuitBaseline(p,**kw))
-    zero,_=simulate(poses,config,controller_factory=lambda p,**kw:CurvaturePursuit(p,rule=LookaheadRule(curvature_gain_m=0.),**kw))
+    original,_=simulate(poses,config,controller_factory=lambda p,**kw:SpeedPursuitBaseline(p,tuning={'lookahead_gain':.35},**kw))
+    zero,_=simulate(poses,config,controller_factory=lambda p,**kw:CurvaturePursuit(p,tuning={'lookahead_gain':.35},rule=LookaheadRule(curvature_gain_m=0.),**kw))
     states=lambda rows:[{k:v for k,v in r.items() if k!='compute_ms'} for r in rows]
     assert states(original)==states(zero)
 
 
 def test_reference_curvature_window_is_bounded_at_path_endpoint():
-    path=Polyline([(0.,0.),(1.,0.)]);controller=CurvaturePursuit(path)
+    path=Polyline([(0.,0.),(1.,0.)]);controller=CurvaturePursuit(path,lookahead=.8)
     assert controller.lookahead_distance(1.,0.,1.)==.8
     assert controller.preview_curvature==0.
 
@@ -75,6 +75,6 @@ def test_default_pp_now_matches_validated_formula_in_free_closed_loop():
     poses=forward_poses([(0.,0.),(3.,0.),(4.,1.),(4.,4.)])
     config=SimulationConfig(speed=.5,duration=15.,feedback_period=.1)
     default,_=simulate(poses,config,controller_factory=lambda p,**kw:PurePursuit(p,**kw))
-    proposed,_=simulate(poses,config,controller_factory=lambda p,**kw:CurvaturePursuit(p,**kw))
+    proposed,_=simulate(poses,config,controller_factory=lambda p,**kw:CurvaturePursuit(p,rule=LookaheadRule(curvature_gain_m=.4076),**kw))
     states=lambda rows:[{k:v for k,v in r.items() if k!='compute_ms'} for r in rows]
     assert states(default)==states(proposed)

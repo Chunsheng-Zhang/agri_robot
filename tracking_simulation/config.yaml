@@ -3,7 +3,7 @@ path: paths/coverage_20261105_125347_567395.json
 controllers: [pp, stanley, lqr, mpc]
 
 simulation:
-  lookahead: 0.8
+  lookahead: 0.5590
   speed: 0.5
   max_angular: 1.0
   completion_tolerance: 0.1
@@ -19,13 +19,13 @@ simulation:
   actuator_angular_tau: 0 # 角速度一阶响应时间常数，s；0关闭
   seed: 0
 
-# 下列为初始工程参数，不是已完成实车标定或最优整定的参数。
+# PP的L0/T/K于2026-11-28按用户要求采用GA候选；不代表实车最优整定。
 tuning:
   pp:
     # Ld = clip((基础前视 + 速度增益*|v|)/(1+曲率增益*|kappa|), 下限, 上限)。
     # 机器人无前轮转向；虚拟转角转换为 omega = v*tan(delta)/wheelbase。
-    lookahead_gain: 0.35
-    curvature_gain: 0.25
+    lookahead_gain: 0.8388
+    curvature_gain: 0.4076
     lookahead_min: 0.65
     lookahead_max: 1.05
     curvature_window: 1.0

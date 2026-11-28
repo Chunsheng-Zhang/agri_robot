@@ -8,14 +8,14 @@ const vue=dependency('vue'),ts=dependency('typescript'),{parse}=dependency('@vue
 const controllerFields={}
 new Function('exports',ts.transpileModule(fs.readFileSync(path.join(root,'agri_web/src/components/tasks/taskParameters.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText)(controllerFields)
 
-test('coverage and following offer exactly the four migrated algorithms, never the old PP',()=>{
+test('coverage and following offer the two PP versions and three other controllers',()=>{
   const choices=controllerFields.trackingControllerChoices
-  assert.deepEqual(Object.keys(choices),['pp','stanley','lqr','mpc'])
+  assert.deepEqual(Object.keys(choices),['pp','pp_speed','stanley','lqr','mpc'])
   const selection=controllerFields.parameterFields.coverage.find(field=>field.key==='controller_algorithm')
   assert.deepEqual(selection.choices,choices)
   assert.equal(controllerFields.parameterFields.waypoint.some(field=>field.key==='controller_algorithm'),false)
   const view=fs.readFileSync(path.join(root,'agri_web/src/views/FollowingView.vue'),'utf8')
-  assert.match(view,/v-model="tracking.controller_algorithm" :disabled="active\|\|busy"/)
+  assert.match(view,/v-model="tracking.controller_algorithm" :disabled="active\|\|busy" @change="controllerChanged"/)
 })
 function fixture(){
   const calls=[],mounted=[],unmounted=[],responses=[],errors=[],devices=vue.ref({safety:{mode:'base',motion_inhibited:false}}),safetyFresh=vue.ref(true)
@@ -28,7 +28,7 @@ function fixture(){
     '../composables/useRealtime':{useRealtime:()=>({devices,safetyFresh}),numberText:String,taskText:String},'../api/http':{apiUrl:x=>x},
   }
   const {descriptor}=parse(fs.readFileSync(path.join(root,'agri_web/src/views/FollowingView.vue'),'utf8'))
-  const names=['context','selected','busy','received','now','fresh','controllerFresh','canEdit','canImport','importFile','name','processing','tracking','active','actualControllerLabel','pendingControllerLabel','mapRaw','mapTrack','filteredPaths','query','selectedLoaded','refresh','choose','start','recordStart','operate','rename','remove']
+  const names=['context','selected','busy','received','now','fresh','controllerFresh','canEdit','canImport','importFile','name','processing','tracking','active','actualControllerLabel','pendingControllerLabel','mapRaw','mapTrack','filteredPaths','query','selectedLoaded','refresh','choose','start','recordStart','operate','rename','remove','controllerChanged']
   const code=ts.transpileModule(`${descriptor.scriptSetup.content}\nreturn {${names.join(',')}}`,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
   const scope=vue.effectScope();let state
   scope.run(()=>state=new Function('require','exports',code)(n=>n.endsWith('.vue')?{}:modules[n],{}))
@@ -38,6 +38,21 @@ function fixture(){
 }
 test('opening the following page does not switch mode, acquire control, load or start',()=>{
   const f=fixture();assert.equal(f.calls.length,0);assert.equal(f.mounted.length,1);assert.equal(f.state.canEdit.value,true);f.stop()
+})
+test('explicit PP choice presets only the base lookahead, without control requests',()=>{
+  const f=fixture(),before={...f.state.tracking}
+  f.state.tracking.controller_algorithm='pp_speed';f.state.controllerChanged()
+  assert.equal(f.state.tracking.lookahead,.8)
+  assert.equal(f.state.pendingControllerLabel.value,'PP（仅速度自适应，昨日版）')
+  assert.equal(f.state.tracking.speed,before.speed)
+  assert.equal(f.state.tracking.max_angular,before.max_angular)
+  f.state.tracking.lookahead=.9
+  assert.equal(f.state.tracking.lookahead,.9)
+  f.state.tracking.controller_algorithm='pp';f.state.controllerChanged()
+  assert.equal(f.state.tracking.lookahead,.5590)
+  f.state.tracking.controller_algorithm='lqr';f.state.tracking.lookahead=.7;f.state.controllerChanged()
+  assert.equal(f.state.tracking.lookahead,.7)
+  assert.equal(f.calls.length,0);f.stop()
 })
 test('choosing LQR while idle shows it as pending and never presents default PP as actual',()=>{
   const f=fixture()
@@ -60,14 +75,17 @@ test('choosing LQR while idle shows it as pending and never presents default PP 
 test('the selected algorithm is sent on explicit start; active and paused tasks cannot restart',async()=>{
   const f=fixture()
   assert.equal(f.state.tracking.controller_algorithm,'pp')
+  assert.equal(f.state.tracking.start_tolerance,.3)
+  f.state.tracking.start_tolerance=2
   f.devices.value.safety.mode='following'
   await f.state.choose({id:'p',state:'READY'})
-  for(const algorithm of ['pp','stanley','lqr','mpc']){
+  for(const algorithm of ['pp','pp_speed','stanley','lqr','mpc']){
     f.state.tracking.controller_algorithm=algorithm
     const pending=f.state.start()
     await new Promise(resolve=>setImmediate(resolve))
     assert.equal(f.calls.at(-1)[0],'start')
     assert.equal(f.calls.at(-1)[1].controller_algorithm,algorithm)
+    assert.equal(f.calls.at(-1)[1].start_tolerance,2)
     f.responses.at(-1).resolve(f.data());await pending
   }
   const before=f.calls.length

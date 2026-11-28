@@ -169,6 +169,27 @@ def test_following_gate_has_exclusive_lease_and_error_watchdog():
     assert gate.output(.7,True)==(0.,0.) and gate.owner==''
 
 
+def test_following_context_hides_restored_run_internal_timestamps(tmp_path,monkeypatch):
+    from fastapi.testclient import TestClient
+    from agri_backend import main
+    from agri_backend.following import following_manager as manager
+    workspace=main.app.state.workspace
+    # sync() restores this sentinel after reconnecting a completed ROS run.
+    run={'id':'finished-following','mode':'following','state':'COMPLETED',
+         '_requested':-float('inf')}
+    monkeypatch.setattr(workspace,'active',run)
+    monkeypatch.setattr(workspace,'sync',lambda:None)
+    monkeypatch.setattr(manager,'snapshot',lambda:{'recording':{'state':'IDLE'}})
+    monkeypatch.setattr(manager,'store',TaughtPathStore(tmp_path))
+    response=TestClient(main.app).get('/api/following/context')
+    assert response.status_code==200
+    assert response.json()['active_run']=={
+        'id':'finished-following','mode':'following','state':'COMPLETED'}
+    assert workspace.active is run and math.isinf(run['_requested'])
+    monkeypatch.setattr(workspace,'active',{**run,'mode':'coverage'})
+    assert TestClient(main.app).get('/api/following/context').json()['active_run'] is None
+
+
 def test_following_api_file_library_and_start_rejection(tmp_path,monkeypatch):
     from fastapi.testclient import TestClient
     from agri_backend import main

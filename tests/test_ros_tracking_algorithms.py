@@ -77,6 +77,7 @@ def test_four_algorithms_ros_parameters_safety_pause_resume_and_recording(tmp_pa
 
         def configure(node, algorithm, directory):
             values = dict(controller_algorithm=algorithm, speed=.5, completion_tolerance=.1,
+                          lookahead=.8 if algorithm == 'pp_speed' else .5590,
                           trajectory_directory=str(directory))
             request = SetParametersAtomically.Request(parameters=[Parameter(k, value=v).to_parameter_msg() for k, v in values.items()])
             return service(SetParametersAtomically, f'/{node.get_name()}/set_parameters_atomically', request).result
@@ -87,7 +88,7 @@ def test_four_algorithms_ros_parameters_safety_pause_resume_and_recording(tmp_pa
             assert service(Trigger, f'/system/mode/{mode}', Trigger.Request()).success
             until(node.healthy)
             assert service(SetBool, '/safety/emergency_stop', SetBool.Request(data=False)).success
-            for algorithm in ('pp', 'stanley', 'lqr', 'mpc'):
+            for algorithm in ('pp', 'pp_speed', 'stanley', 'lqr', 'mpc'):
                 until(lambda: not safety.gate.owner and state['v'] == state['w'] == 0.)
                 state.update(x=0., y=0., yaw=0.)
                 until(lambda: abs(node.odom.pose.pose.position.x) < .01)

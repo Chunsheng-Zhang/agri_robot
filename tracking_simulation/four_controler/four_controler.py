@@ -21,8 +21,8 @@ from agri_path_tracking.controller import PurePursuit as PathTrackingState
 
 NAMES = ('pp', 'stanley', 'lqr', 'mpc')
 LABELS = {'pp': 'Pure Pursuit', 'stanley': 'Stanley (yaw-rate)', 'lqr': 'LQR', 'mpc': 'MPC'}
-PP_DEFAULTS = dict(lookahead_gain=.35, wheelbase=.16, rear_offset=0., max_steer_deg=35.,
-                   curvature_gain=.25, lookahead_min=.65, lookahead_max=1.05, curvature_window=1.)
+PP_DEFAULTS = dict(lookahead_gain=.8388, wheelbase=.16, rear_offset=0., max_steer_deg=35.,
+                   curvature_gain=.4076, lookahead_min=.65, lookahead_max=1.05, curvature_window=1.)
 
 
 def pure_pursuit_control(rear_x, rear_y, yaw, target_x, target_y, wheelbase, max_steer):

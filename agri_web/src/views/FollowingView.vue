@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ModeSelector from '../components/ModeSelector.vue'
 import FollowingMap from '../components/FollowingMap.vue'
-import { trackingControllerChoices } from '../components/tasks/taskParameters'
+import { trackingControllerChoices, trackingControllerLookahead } from '../components/tasks/taskParameters'
 import { followingRequest, getFollowing, getTaughtPath, importFollowingFile } from '../api/following'
 import type { FollowingContext, FollowingParameters, ProcessingParameters, TaughtPath } from '../api/following'
 import { useRealtime, numberText, taskText } from '../composables/useRealtime'
@@ -15,9 +15,13 @@ const name=ref('田间道路示教')
 const query=ref('')
 const fileInput=ref<HTMLInputElement|null>(null)
 const processing=reactive<ProcessingParameters>({allow_reverse:false})
-const tracking=reactive<FollowingParameters>({controller_algorithm:'pp',lookahead:.5,speed:.1,max_angular:.5,completion_tolerance:.15,start_tolerance:.3,search_window:1,max_path_error:.5})
+const tracking=reactive<FollowingParameters>({controller_algorithm:'pp',lookahead:.5590,speed:.1,max_angular:5,completion_tolerance:.15,start_tolerance:.3,search_window:1,max_path_error:.5})
 let poll:ReturnType<typeof setInterval>|undefined, clock:ReturnType<typeof setInterval>|undefined
 let disposed=false,inflight=false,selection=0
+function controllerChanged(){
+  const value=trackingControllerLookahead(tracking.controller_algorithm)
+  if(value!==undefined)tracking.lookahead=value
+}
 const fresh=computed(()=>!!context.value && now.value-received.value<1500)
 const controllerFresh=computed(()=>fresh.value && context.value?.status.fresh===true && (context.value.status.age_seconds??Infinity)*1000+now.value-received.value<1000)
 const recording=computed(()=>context.value?.recording.state==='RECORDING')
@@ -135,16 +139,17 @@ onUnmounted(()=>{disposed=true;selection++;clearInterval(poll);clearInterval(clo
           <p v-else class="note">待执行跟踪算法：{{ pendingControllerLabel }}（点击“开始路径跟随”时生效）</p>
           <p v-if="selected?.import_source" class="note">来源：{{ selected.import_source.filename }} · {{ selected.import_source.coordinate_system }}。{{ selected.import_source.note }}。开始前请核对道路可通行性。</p>
           <el-form label-position="top" class="parameters">
-            <el-form-item label="路径跟踪算法"><el-select v-model="tracking.controller_algorithm" :disabled="active||busy"><el-option v-for="(label,key) in trackingControllerChoices" :key="key" :label="label" :value="key"/></el-select></el-form-item>
+            <el-form-item label="路径跟踪算法"><el-select v-model="tracking.controller_algorithm" :disabled="active||busy" @change="controllerChanged"><el-option v-for="(label,key) in trackingControllerChoices" :key="key" :label="label" :value="key"/></el-select></el-form-item>
             <el-form-item label="跟随速度（m/s）"><el-input-number v-model="tracking.speed" :min=".02" :max="1" :step=".05" :disabled="active"/></el-form-item>
-            <el-form-item v-if="tracking.controller_algorithm==='pp'" label="PP基础前视距离（m）"><el-input-number v-model="tracking.lookahead" :min=".1" :max="3" :step=".1" :disabled="active"/></el-form-item>
-            <el-form-item label="最大角速度（rad/s）"><el-input-number v-model="tracking.max_angular" :min=".05" :max="1" :step=".05" :disabled="active"/></el-form-item>
+            <el-form-item v-if="['pp','pp_speed'].includes(tracking.controller_algorithm)" label="PP基础前视距离（m）"><el-input-number v-model="tracking.lookahead" :min=".1" :max="3" :step=".1" :disabled="active"/></el-form-item>
+            <el-form-item label="最大角速度（rad/s）"><el-input-number v-model="tracking.max_angular" :min=".05" :max="5" :step=".05" :disabled="active"/></el-form-item>
             <el-form-item label="最大路径偏离（m）"><el-input-number v-model="tracking.max_path_error" :min=".1" :max="2" :step=".1" :disabled="active"/></el-form-item>
-            <el-form-item label="起点允许距离（m）"><el-input-number v-model="tracking.start_tolerance" :min=".05" :max=".5" :step=".05" :disabled="active"/></el-form-item>
+            <el-form-item label="起点允许距离（m）"><el-input-number v-model="tracking.start_tolerance" :min=".05" :max="2" :step=".05" :disabled="active"/></el-form-item>
             <el-form-item label="终点到达阈值（m）"><el-input-number v-model="tracking.completion_tolerance" :min=".03" :max=".5" :step=".05" :disabled="active"/></el-form-item>
             <el-form-item label="路径进度搜索窗口（m）"><el-input-number v-model="tracking.search_window" :min=".1" :max="5" :step=".1" :disabled="active"/></el-form-item>
           </el-form>
           <p v-if="tracking.controller_algorithm==='pp'" class="note">PP实际前视随速度和前方路径曲率自动调整，限定0.65～1.05 m；上方设置的是基础前视值，开始跟随后生效。</p>
+          <p v-if="tracking.controller_algorithm==='pp_speed'" class="note">昨日版PP：Ld=L0+0.35×实际速度，不使用曲率项或0.65～1.05 m截断。选择时基础前视设为昨日的0.8 m，可再修改；速度和角速度上限仍按本次设置，开始后生效。</p>
           <div class="actions"><el-button :disabled="!canEdit||!followMode||!selected" @click="operate(`paths/${selected!.id}/load`)">加载此路径</el-button>
             <el-button type="success" :disabled="!canEdit||!followMode||!selectedLoaded||!safetyFresh||devices?.safety.motion_inhibited" @click="start">开始路径跟随</el-button>
             <el-button :disabled="!controllerFresh||context?.status.state!=='RUNNING'||busy" @click="operate('task/pause')">暂停</el-button>
